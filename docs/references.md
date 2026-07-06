@@ -22,7 +22,6 @@ This is a list of references that I used to learn.
 I also recommend to use Rust to develop your own GameBoy games.
 
 - [BGB](https://bgb.bircd.org/) - A GameBoy emulator for Windows. It has a built-in debugger and is very useful for testing your homebrew games.
-- [Krikzz](https://krikzz.com/our-products/) - If you want to play your homebrew GameBoy games on real hardware.
 - [rust-gb](https://github.com/zlfn/rust-gb) - Compile Rust code to GBZ80 (Gameboy Z80)
 - [rgbds](https://github.com/gbdev/rgbds) - Rednex Game Boy Development System - An assembly toolchain for the Nintendo Game Boy and Game Boy Color.
 - [Marron's Day](https://npckc.itch.io/marrons-day) - A cute GameBoy game, save the town festival.
