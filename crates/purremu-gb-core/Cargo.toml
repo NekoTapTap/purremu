@@ -1,0 +1,14 @@
+[package]
+name = "purremu_gb_core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "purremu_gb_core"
+
+[dependencies]
+rand = "0.10.2"
+strum = { version = "0.28", features = ["derive"] }
