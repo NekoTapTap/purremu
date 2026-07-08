@@ -1,16 +1,16 @@
 use strum::IntoEnumIterator;
 
-use crate::cpu::{Cpu, CpuArithmetic, CpuInstruction, CpuPhase, CpuRegister};
+use crate::cpu::{Cpu, CpuArithmetic, CpuInstruction, CpuPhase, CpuReg8};
 use crate::memory_bus::MemoryBus;
 
 #[test]
 fn test_ld_r_imm8() {
-    for register in CpuRegister::iter() {
+    for register in CpuReg8::iter() {
         let mut bus = MemoryBus::new();
         let mut cpu = Cpu::new();
 
         let expected_register_value = rand::random_range(u8::MIN..=u8::MAX); // Random value for testing
-        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::LdR8N8(register)); // LD r, imm8
+        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::LdR8Imm8(register)); // LD r, imm8
         bus.rom[0x0001] = expected_register_value;
 
         assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
@@ -18,7 +18,7 @@ fn test_ld_r_imm8() {
         cpu.step_cycle(&bus);
         assert_eq!(
             cpu.phase,
-            CpuPhase::FetchImmediateNumber(CpuInstruction::LdR8N8(register)),
+            CpuPhase::FetchImm8(CpuInstruction::LdR8Imm8(register)),
             "test failed for register {:?}",
             register
         );
@@ -26,13 +26,13 @@ fn test_ld_r_imm8() {
 
         cpu.step_cycle(&bus);
         match register {
-            CpuRegister::A => assert_eq!(cpu.registers.a, expected_register_value),
-            CpuRegister::B => assert_eq!(cpu.registers.b, expected_register_value),
-            CpuRegister::C => assert_eq!(cpu.registers.c, expected_register_value),
-            CpuRegister::D => assert_eq!(cpu.registers.d, expected_register_value),
-            CpuRegister::E => assert_eq!(cpu.registers.e, expected_register_value),
-            CpuRegister::H => assert_eq!(cpu.registers.h, expected_register_value),
-            CpuRegister::L => assert_eq!(cpu.registers.l, expected_register_value),
+            CpuReg8::A => assert_eq!(cpu.registers.a, expected_register_value),
+            CpuReg8::B => assert_eq!(cpu.registers.b, expected_register_value),
+            CpuReg8::C => assert_eq!(cpu.registers.c, expected_register_value),
+            CpuReg8::D => assert_eq!(cpu.registers.d, expected_register_value),
+            CpuReg8::E => assert_eq!(cpu.registers.e, expected_register_value),
+            CpuReg8::H => assert_eq!(cpu.registers.h, expected_register_value),
+            CpuReg8::L => assert_eq!(cpu.registers.l, expected_register_value),
         }
         assert_eq!(cpu.registers.pc, 0x0002);
         assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
@@ -89,14 +89,14 @@ fn test_add_a_imm8() {
 
     let initial_a_value = 0x10;
     let imm_value = 0x20;
-    bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::AddAN8); // ADD A, imm8
+    bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::AddAImm8); // ADD A, imm8
     bus.rom[0x0001] = imm_value;
-    cpu.registers.set(CpuRegister::A, initial_a_value);
+    cpu.registers.set_r8(CpuReg8::A, initial_a_value);
 
     cpu.step_cycle(&bus);
     assert_eq!(
         cpu.phase,
-        CpuPhase::FetchImmediateNumber(CpuInstruction::AddAN8),
+        CpuPhase::FetchImm8(CpuInstruction::AddAImm8),
         "test failed for ADD A, imm8"
     );
     assert_eq!(cpu.registers.pc, 0x0001);
@@ -112,12 +112,12 @@ fn test_add_a_imm8() {
 
 #[test]
 fn test_add_a_r() {
-    for register in CpuRegister::iter() {
+    for register in CpuReg8::iter() {
         let mut bus = MemoryBus::new();
         let mut cpu = Cpu::new();
 
         let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
-        let r_value = if register == CpuRegister::A {
+        let r_value = if register == CpuReg8::A {
             // if register is A, use the same value as initial_a_value to test adding A to itself
             initial_a_value
         } else {
@@ -125,8 +125,8 @@ fn test_add_a_r() {
         };
         bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::AddAR8(register)); // ADD A, r
 
-        cpu.registers.set(CpuRegister::A, initial_a_value);
-        cpu.registers.set(register, r_value);
+        cpu.registers.set_r8(CpuReg8::A, initial_a_value);
+        cpu.registers.set_r8(register, r_value);
         cpu.step_cycle(&bus);
         assert_eq!(
             cpu.phase,
