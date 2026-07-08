@@ -33,7 +33,7 @@ pub enum CpuReg16 {
 pub enum CpuInstruction {
     LdR8Imm8(CpuReg8),
     LdR8R8(CpuReg8, CpuReg8),
-    LdR16Imm16(CpuReg8, CpuReg8),
+    LdR16Imm16(CpuReg16),
     LdR16memR8(CpuReg16, CpuReg8),
     LdR8R16mem(CpuReg8, CpuReg16),
 
@@ -91,7 +91,6 @@ impl CpuRegisters {
             f: CpuFlagsReg::new(),
         }
     }
-
 
     fn set_r8(&mut self, register: CpuReg8, value: u8) {
         match register {
@@ -165,31 +164,37 @@ trait CpuArithmetic
 where
     Self: Sized,
 {
-    fn cpu_add(&self, value: u8) -> (Self, CpuFlagsReg);
-    fn cpu_sub(&self, value: u8) -> (Self, CpuFlagsReg);
+    fn cpu_add(&self, value: u8, carry_flag: bool) -> (Self, CpuFlagsReg);
+    fn cpu_sub(&self, value: u8, borrow_flag: bool) -> (Self, CpuFlagsReg);
 }
 
 impl CpuArithmetic for u8 {
-    fn cpu_add(&self, value: u8) -> (Self, CpuFlagsReg) {
-        let (result, carry) = self.overflowing_add(value);
+    fn cpu_add(&self, value: u8, carry_flag: bool) -> (Self, CpuFlagsReg) {
+        let carry = u8::from(carry_flag);
+        let result_u16 = *self as u16 + value as u16 + carry as u16;
+        let result_carry = result_u16 > 0xFF;
+        let result = result_u16 as u8;
 
         let flags = CpuFlagsReg {
             zero: result == 0,
             subtract: false,
-            half_carry: (*self & 0x0F) + (value & 0x0F) > 0x0F, // For BCD
-            carry: carry,
+            half_carry: ((*self & 0x0F) + (value & 0x0F) + carry) > 0x0F, // For BCD
+            carry: result_carry,
         };
         (result, flags)
     }
 
-    fn cpu_sub(&self, value: u8) -> (Self, CpuFlagsReg) {
-        let (result, borrow) = self.overflowing_sub(value);
+    fn cpu_sub(&self, value: u8, borrow_flag: bool) -> (Self, CpuFlagsReg) {
+        let borrow = u8::from(borrow_flag);
+        let result_u16 = (*self as u16).wrapping_sub(value as u16 + borrow as u16);
+        let result = result_u16 as u8;
+        let borrow_occurred = (*self as u16) < (value as u16 + borrow as u16);
 
         let flags = CpuFlagsReg {
             zero: result == 0,
             subtract: true,
-            half_carry: (*self & 0x0F) < (value & 0x0F), // For BCD
-            carry: borrow,
+            half_carry: (*self & 0x0F) < (value & 0x0F) + borrow, // For BCD
+            carry: borrow_occurred,
         };
         (result, flags)
     }
@@ -219,9 +224,9 @@ impl Cpu {
         use CpuReg16::*;
 
         [
-            [NoImpl     , LdR16Imm16(B,C), LdR16memR8(BC,A), IncR16(B,C), IncR8(B)   , DecR8(B)   , LdR8Imm8(B), NoImpl     , NoImpl     , AddR16R16(HL,BC), LdR8R16mem(A,BC), DecR16(BC), IncR8(C)   , DecR8(C)   , LdR8Imm8(C), NoImpl     ],
-            [NoImpl     , LdR16Imm16(D,E), LdR16memR8(DE,A), IncR16(D,E), IncR8(D)   , DecR8(D)   , LdR8Imm8(D), NoImpl     , NoImpl     , AddR16R16(HL,DE), LdR8R16mem(A,DE), DecR16(DE), IncR8(E)   , DecR8(E)   , LdR8Imm8(E), NoImpl     ],
-            [NoImpl     , LdR16Imm16(H,L), LdR16memR8(HL,A), IncR16(H,L), IncR8(H)   , DecR8(H)   , LdR8Imm8(H), NoImpl     , NoImpl     , AddR16R16(HL,HL), LdR8R16mem(A,HL), DecR16(HL), IncR8(L)   , DecR8(L)   , LdR8Imm8(L), NoImpl     ],
+            [NoImpl     , LdR16Imm16(BC), LdR16memR8(BC,A), IncR16(B,C), IncR8(B)   , DecR8(B)   , LdR8Imm8(B), NoImpl     , NoImpl     , AddR16R16(HL,BC), LdR8R16mem(A,BC), DecR16(BC), IncR8(C)   , DecR8(C)   , LdR8Imm8(C), NoImpl     ],
+            [NoImpl     , LdR16Imm16(DE), LdR16memR8(DE,A), IncR16(D,E), IncR8(D)   , DecR8(D)   , LdR8Imm8(D), NoImpl     , NoImpl     , AddR16R16(HL,DE), LdR8R16mem(A,DE), DecR16(DE), IncR8(E)   , DecR8(E)   , LdR8Imm8(E), NoImpl     ],
+            [NoImpl     , LdR16Imm16(HL), LdR16memR8(HL,A), IncR16(H,L), IncR8(H)   , DecR8(H)   , LdR8Imm8(H), NoImpl     , NoImpl     , AddR16R16(HL,HL), LdR8R16mem(A,HL), DecR16(HL), IncR8(L)   , DecR8(L)   , LdR8Imm8(L), NoImpl     ],
             [NoImpl     , NoImpl       , NoImpl        , NoImpl     , NoImpl     , NoImpl     , NoImpl   , NoImpl     , NoImpl     , NoImpl            , NoImpl        , NoImpl     , IncR8(A)   , DecR8(A)   , LdR8Imm8(A), NoImpl     ],
 
             [LdR8R8(B,B), LdR8R8(B,C)  , LdR8R8(B,D)   , LdR8R8(B,E), LdR8R8(B,H), LdR8R8(B,L), NoImpl   , LdR8R8(B,A), LdR8R8(C,B), LdR8R8(C,C)       , LdR8R8(C,D)   , LdR8R8(C,E), LdR8R8(C,H), LdR8R8(C,L), NoImpl   , LdR8R8(C,A)],
@@ -269,14 +274,28 @@ impl Cpu {
             }
             CpuInstruction::AddAImm8 => {
                 let value = self.fetch8(bus);
-                let (result, flags) = self.registers.a.cpu_add(value);
+                let (result, flags) = self.registers.a.cpu_add(value, self.registers.f.carry);
                 self.registers.a = result;
                 self.registers.f = flags;
                 self.phase = CpuPhase::FetchOpcode;
             }
             CpuInstruction::SubAImm8 => {
                 let value = self.fetch8(bus);
-                let (result, flags) = self.registers.a.cpu_sub(value);
+                let (result, flags) = self.registers.a.cpu_sub(value, self.registers.f.carry);
+                self.registers.a = result;
+                self.registers.f = flags;
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::AdcAImm8 => {
+                let value = self.fetch8(bus);
+                let (result, flags) = self.registers.a.cpu_add(value, self.registers.f.carry);
+                self.registers.a = result;
+                self.registers.f = flags;
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::SbcAImm8 => {
+                let value = self.fetch8(bus);
+                let (result, flags) = self.registers.a.cpu_sub(value, self.registers.f.carry);
                 self.registers.a = result;
                 self.registers.f = flags;
                 self.phase = CpuPhase::FetchOpcode;
@@ -285,6 +304,24 @@ impl Cpu {
                 panic!("No such instruction: {:?}", instruction);
             }
         }
+    }
+
+    // only 1 m-cycle instruction, so we can directly decode it
+    fn phase_add_a_r8(&mut self, register: CpuReg8, carry_flag: bool) {
+        let value = self.registers.get_r8(register);
+        let (result, flags) = self.registers.a.cpu_add(value, carry_flag);
+        self.registers.a = result;
+        self.registers.f = flags;
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    // only 1 m-cycle instruction, so we can directly decode it
+    fn phase_sub_a_r8(&mut self, register: CpuReg8, borrow_flag: bool) {
+        let value = self.registers.get_r8(register);
+        let (result, flags) = self.registers.a.cpu_sub(value, borrow_flag);
+        self.registers.a = result;
+        self.registers.f = flags;
+        self.phase = CpuPhase::FetchOpcode;
     }
 
     fn step_cycle(&mut self, bus: &MemoryBus) {
@@ -301,22 +338,25 @@ impl Cpu {
                         self.phase = CpuPhase::FetchImm8(instruction);
                     }
                     CpuInstruction::AddAR8(register) => {
-                        // only 1 m-cycle instruction, so we can directly decode it
-                        let value = self.registers.get_r8(register);
-                        let (result, flags) = self.registers.a.cpu_add(value);
-                        self.registers.a = result;
-                        self.registers.f = flags;
-                        self.phase = CpuPhase::FetchOpcode;
+                        self.phase_add_a_r8(register, false);
+                    }
+                    CpuInstruction::AdcAImm8 => {
+                        self.phase = CpuPhase::FetchImm8(instruction);
+                    }
+                    CpuInstruction::AdcAR8(register) => {
+                        self.phase_add_a_r8(register, self.registers.f.carry);
                     }
                     CpuInstruction::SubAImm8 => {
                         self.phase = CpuPhase::FetchImm8(instruction);
                     }
                     CpuInstruction::SubAR8(register) => {
-                        let value = self.registers.get_r8(register);
-                        let (result, flags) = self.registers.a.cpu_sub(value);
-                        self.registers.a = result;
-                        self.registers.f = flags;
-                        self.phase = CpuPhase::FetchOpcode;
+                        self.phase_sub_a_r8(register, false);
+                    }
+                    CpuInstruction::SbcAImm8 => {
+                        self.phase = CpuPhase::FetchImm8(instruction);
+                    }
+                    CpuInstruction::SbcAR8(register) => {
+                        self.phase_sub_a_r8(register, self.registers.f.carry);
                     }
                     _ => {
                         panic!("No such instruction: {:?}", instruction);

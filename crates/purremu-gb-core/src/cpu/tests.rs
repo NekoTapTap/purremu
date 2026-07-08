@@ -44,7 +44,7 @@ fn test_cpu_add() {
     // normal add
     let a = 0x10u8;
     let b = 0x20u8;
-    let (result, flags) = a.cpu_add(b);
+    let (result, flags) = a.cpu_add(b, false);
     assert_eq!(result, 0x30);
     assert_eq!(flags.zero, false);
     assert_eq!(flags.subtract, false);
@@ -54,7 +54,7 @@ fn test_cpu_add() {
     // add with half carry
     let a = 0x0Fu8;
     let b = 0x01u8;
-    let (result, flags) = a.cpu_add(b);
+    let (result, flags) = a.cpu_add(b, false);
     assert_eq!(result, 0x10);
     assert_eq!(flags.zero, false);
     assert_eq!(flags.subtract, false);
@@ -64,7 +64,7 @@ fn test_cpu_add() {
     // add with carry but no zero
     let a = 0xFFu8;
     let b = 0x02u8;
-    let (result, flags) = a.cpu_add(b);
+    let (result, flags) = a.cpu_add(b, false);
     assert_eq!(result, 0x01);
     assert_eq!(flags.zero, false);
     assert_eq!(flags.subtract, false);
@@ -74,12 +74,22 @@ fn test_cpu_add() {
     // add with zero result
     let a = 0xFFu8;
     let b = 0x01u8;
-    let (result, flags) = a.cpu_add(b);
+    let (result, flags) = a.cpu_add(b, false);
     assert_eq!(result, 0x00);
     assert_eq!(flags.zero, true);
     assert_eq!(flags.subtract, false);
     assert_eq!(flags.half_carry, true);
     assert_eq!(flags.carry, true);
+
+    // add with carry flag set
+    let a = 0x10u8;
+    let b = 0x20u8;
+    let (result, flags) = a.cpu_add(b, true);
+    assert_eq!(result, 0x31);
+    assert_eq!(flags.zero, false);
+    assert_eq!(flags.subtract, false);
+    assert_eq!(flags.half_carry, false);
+    assert_eq!(flags.carry, false);
 }
 
 #[test]
@@ -152,7 +162,7 @@ fn test_cpu_sub() {
     // normal sub
     let a = 0x20u8;
     let b = 0x10u8;
-    let (result, flags) = a.cpu_sub(b);
+    let (result, flags) = a.cpu_sub(b, false);
     assert_eq!(result, 0x10);
     assert_eq!(flags.zero, false);
     assert_eq!(flags.subtract, true);
@@ -162,7 +172,7 @@ fn test_cpu_sub() {
     // sub with half carry
     let a = 0x10u8;
     let b = 0x01u8;
-    let (result, flags) = a.cpu_sub(b);
+    let (result, flags) = a.cpu_sub(b, false);
     assert_eq!(result, 0x0F);
     assert_eq!(flags.zero, false);
     assert_eq!(flags.subtract, true);
@@ -172,7 +182,7 @@ fn test_cpu_sub() {
     // sub with borrow but no zero
     let a = 0x01u8;
     let b = 0x02u8;
-    let (result, flags) = a.cpu_sub(b);
+    let (result, flags) = a.cpu_sub(b, false);
     assert_eq!(result, 0xFF);
     assert_eq!(flags.zero, false);
     assert_eq!(flags.subtract, true);
@@ -182,11 +192,21 @@ fn test_cpu_sub() {
     // sub with zero result
     let a = 0x01u8;
     let b = 0x01u8;
-    let (result, flags) = a.cpu_sub(b);
+    let (result, flags) = a.cpu_sub(b, false);
     assert_eq!(result, 0x00);
     assert_eq!(flags.zero, true);
     assert_eq!(flags.subtract, true);
     assert_eq!(flags.half_carry, false);
+    assert_eq!(flags.carry, false);
+
+    // sub with carry flag set
+    let a = 0x20u8;
+    let b = 0x10u8;
+    let (result, flags) = a.cpu_sub(b, true);
+    assert_eq!(result, 0x0F);
+    assert_eq!(flags.zero, false);
+    assert_eq!(flags.subtract, true);
+    assert_eq!(flags.half_carry, true);
     assert_eq!(flags.carry, false);
 }
 
