@@ -1,48 +1,24 @@
-use std::hash::RandomState;
-
-use rand::RngExt;
 use strum::IntoEnumIterator;
 
-use crate::cpu::{Cpu, CpuArithmetic, CpuInstruction, CpuPhase, CpuRegister, CpuRegisters};
+use crate::cpu::{Cpu, CpuArithmetic, CpuInstruction, CpuPhase, CpuRegister};
 use crate::memory_bus::MemoryBus;
-
-impl From<CpuInstruction> for u8 {
-    fn from(instruction: CpuInstruction) -> Self {
-        match instruction {
-            CpuInstruction::LdRImm8(CpuRegister::A) => 0x3E,
-            CpuInstruction::LdRImm8(CpuRegister::B) => 0x06,
-            CpuInstruction::LdRImm8(CpuRegister::C) => 0x0E,
-            CpuInstruction::LdRImm8(CpuRegister::D) => 0x16,
-            CpuInstruction::LdRImm8(CpuRegister::E) => 0x1E,
-            CpuInstruction::LdRImm8(CpuRegister::H) => 0x26,
-            CpuInstruction::LdRImm8(CpuRegister::L) => 0x2E,
-            CpuInstruction::AddAImm8 => 0xC6,
-            CpuInstruction::AddAR(CpuRegister::A) => 0x87,
-            CpuInstruction::AddAR(CpuRegister::B) => 0x80,
-            CpuInstruction::AddAR(CpuRegister::C) => 0x81,
-            CpuInstruction::AddAR(CpuRegister::D) => 0x82,
-            CpuInstruction::AddAR(CpuRegister::E) => 0x83,
-            CpuInstruction::AddAR(CpuRegister::H) => 0x84,
-            CpuInstruction::AddAR(CpuRegister::L) => 0x85,
-        }
-    }
-}
 
 #[test]
 fn test_ld_r_imm8() {
     for register in CpuRegister::iter() {
         let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
         let expected_register_value = rand::random_range(u8::MIN..=u8::MAX); // Random value for testing
-        bus.rom[0x0000] = CpuInstruction::LdRImm8(register).into(); // LD r, imm8
+        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::LdR8N8(register)); // LD r, imm8
         bus.rom[0x0001] = expected_register_value;
 
-        let mut cpu = Cpu::new();
         assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
 
         cpu.step_cycle(&bus);
         assert_eq!(
             cpu.phase,
-            CpuPhase::InstructionDecode(CpuInstruction::LdRImm8(register)),
+            CpuPhase::FetchImmediateNumber(CpuInstruction::LdR8N8(register)),
             "test failed for register {:?}",
             register
         );
@@ -109,17 +85,18 @@ fn test_cpu_add() {
 #[test]
 fn test_add_a_imm8() {
     let mut bus = MemoryBus::new();
+    let mut cpu = Cpu::new();
+
     let initial_a_value = 0x10;
     let imm_value = 0x20;
-    bus.rom[0x0000] = CpuInstruction::AddAImm8.into(); // ADD A, imm8
+    bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::AddAN8); // ADD A, imm8
     bus.rom[0x0001] = imm_value;
-    let mut cpu = Cpu::new();
     cpu.registers.set(CpuRegister::A, initial_a_value);
 
     cpu.step_cycle(&bus);
     assert_eq!(
         cpu.phase,
-        CpuPhase::InstructionDecode(CpuInstruction::AddAImm8),
+        CpuPhase::FetchImmediateNumber(CpuInstruction::AddAN8),
         "test failed for ADD A, imm8"
     );
     assert_eq!(cpu.registers.pc, 0x0001);
@@ -137,15 +114,17 @@ fn test_add_a_imm8() {
 fn test_add_a_r() {
     for register in CpuRegister::iter() {
         let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
         let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
-        let r_value = if register == CpuRegister::A { // if register is A, use the same value as initial_a_value to test adding A to itself
+        let r_value = if register == CpuRegister::A {
+            // if register is A, use the same value as initial_a_value to test adding A to itself
             initial_a_value
         } else {
             rand::random_range(u8::MIN..=u8::MAX) // Random value for testing
         };
-        bus.rom[0x0000] = CpuInstruction::AddAR(register).into(); // ADD A, r
+        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::AddAR8(register)); // ADD A, r
 
-        let mut cpu = Cpu::new();
         cpu.registers.set(CpuRegister::A, initial_a_value);
         cpu.registers.set(register, r_value);
         cpu.step_cycle(&bus);

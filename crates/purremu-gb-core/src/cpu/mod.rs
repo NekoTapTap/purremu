@@ -6,49 +6,56 @@ mod tests;
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum CpuPhase {
     FetchOpcode,
-    InstructionDecode(CpuInstruction),
+    FetchImmediateNumber(CpuInstruction),
 }
 
+#[rustfmt::skip]
 #[derive(PartialEq, Debug, Clone, Copy)]
 #[cfg_attr(test, derive(strum::EnumIter))]
 pub enum CpuRegister {
     A,
-    B,
-    C,
-    D,
-    E,
-    H,
-    L,
+    B, C,
+    D, E,
+    H, L,
 }
 
+#[rustfmt::skip]
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum CpuInstruction {
-    LdRImm8(CpuRegister),
-    AddAImm8,
-    AddAR(CpuRegister),
-}
+    LdR8N8(CpuRegister),
+    LdR8R8(CpuRegister, CpuRegister),
+    LdR16N16(CpuRegister, CpuRegister),
+    LdR16R8(CpuRegister, CpuRegister, CpuRegister),
+    LdR8R16(CpuRegister, CpuRegister, CpuRegister),
 
-impl From<u8> for CpuInstruction {
-    fn from(opcode: u8) -> Self {
-        match opcode {
-            0x3E => CpuInstruction::LdRImm8(CpuRegister::A), // LD A, imm8
-            0x06 => CpuInstruction::LdRImm8(CpuRegister::B), // LD B, imm8
-            0x0E => CpuInstruction::LdRImm8(CpuRegister::C), // LD C, imm8
-            0x16 => CpuInstruction::LdRImm8(CpuRegister::D), // LD D, imm8
-            0x1E => CpuInstruction::LdRImm8(CpuRegister::E), // LD E, imm8
-            0x26 => CpuInstruction::LdRImm8(CpuRegister::H), // LD H, imm8
-            0x2E => CpuInstruction::LdRImm8(CpuRegister::L), // LD L, imm8
-            0xC6 => CpuInstruction::AddAImm8,                // ADD A, imm8
-            0x80 => CpuInstruction::AddAR(CpuRegister::B), // ADD A, B
-            0x81 => CpuInstruction::AddAR(CpuRegister::C), // ADD A, C
-            0x82 => CpuInstruction::AddAR(CpuRegister::D), // ADD A, D
-            0x83 => CpuInstruction::AddAR(CpuRegister::E), // ADD A, E
-            0x84 => CpuInstruction::AddAR(CpuRegister::H), // ADD A, H
-            0x85 => CpuInstruction::AddAR(CpuRegister::L), // ADD A, L
-            0x87 => CpuInstruction::AddAR(CpuRegister::A), // ADD A, A
-            _ => panic!("Opcode {:02X} not implemented", opcode),
-        }
-    }
+    IncR8(CpuRegister),
+    IncR16(CpuRegister, CpuRegister),
+    DecR8(CpuRegister),
+    DecR16(CpuRegister, CpuRegister),
+
+    AddAN8,
+    AddAR8(CpuRegister),
+    AddR16R16(CpuRegister, CpuRegister, CpuRegister, CpuRegister),
+    AdcAN8,
+    AdcAR8(CpuRegister),
+
+    SubAN8,
+    SubAR8(CpuRegister),
+    SbcAN8,
+    SbcAR8(CpuRegister),
+
+    AndAN8,
+    AndAR8(CpuRegister),
+    OrAN8,
+    OrAR8(CpuRegister),
+    XorAN8,
+    XorAR8(CpuRegister),
+
+    CpAN8,
+    CpAR8(CpuRegister),
+
+    Illegal,
+    NoImpl,
 }
 
 #[rustfmt::skip]
@@ -75,6 +82,7 @@ impl CpuRegisters {
             f: CpuFlagsRegister::new(),
         }
     }
+
 
     fn set(&mut self, register: CpuRegister, value: u8) {
         match register {
@@ -169,6 +177,7 @@ pub struct Cpu {
     divider: u8,
     phase: CpuPhase,
     registers: CpuRegisters,
+    instruction_set: [[CpuInstruction; 16]; 16],
 }
 
 impl Cpu {
@@ -177,17 +186,65 @@ impl Cpu {
             divider: 0,
             phase: CpuPhase::FetchOpcode,
             registers: CpuRegisters::new(),
+            instruction_set: Self::initialize_instruction_set(),
         }
     }
 
-    fn decode_instruction(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
+    #[rustfmt::skip]
+    pub fn initialize_instruction_set() -> [[CpuInstruction; 16]; 16] {
+        use CpuInstruction::*;
+        use CpuRegister::*;
+
+        [
+            [NoImpl     , LdR16N16(B,C), LdR16R8(B,C,A), IncR16(B,C), IncR8(B)   , DecR8(B)   , LdR8N8(B), NoImpl     , NoImpl     , AddR16R16(H,L,B,C), LdR8R16(A,B,C), DecR16(B,C), IncR8(C)   , DecR8(C)   , LdR8N8(C), NoImpl     ],
+            [NoImpl     , LdR16N16(D,E), LdR16R8(D,E,A), IncR16(D,E), IncR8(D)   , DecR8(D)   , LdR8N8(D), NoImpl     , NoImpl     , AddR16R16(H,L,D,E), LdR8R16(A,D,E), DecR16(D,E), IncR8(E)   , DecR8(E)   , LdR8N8(E), NoImpl     ],
+            [NoImpl     , LdR16N16(H,L), LdR16R8(H,L,A), IncR16(H,L), IncR8(H)   , DecR8(H)   , LdR8N8(H), NoImpl     , NoImpl     , AddR16R16(H,L,H,L), LdR8R16(A,H,L), DecR16(H,L), IncR8(L)   , DecR8(L)   , LdR8N8(L), NoImpl     ],
+            [NoImpl     , NoImpl       , NoImpl        , NoImpl     , NoImpl     , NoImpl     , NoImpl   , NoImpl     , NoImpl     , NoImpl            , NoImpl        , NoImpl     , IncR8(A)   , DecR8(A)   , LdR8N8(A), NoImpl     ],
+
+            [LdR8R8(B,B), LdR8R8(B,C)  , LdR8R8(B,D)   , LdR8R8(B,E), LdR8R8(B,H), LdR8R8(B,L), NoImpl   , LdR8R8(B,A), LdR8R8(C,B), LdR8R8(C,C)       , LdR8R8(C,D)   , LdR8R8(C,E), LdR8R8(C,H), LdR8R8(C,L), NoImpl   , LdR8R8(C,A)],
+            [LdR8R8(D,B), LdR8R8(D,C)  , LdR8R8(D,D)   , LdR8R8(D,E), LdR8R8(D,H), LdR8R8(D,L), NoImpl   , LdR8R8(D,A), LdR8R8(E,B), LdR8R8(E,C)       , LdR8R8(E,D)   , LdR8R8(E,E), LdR8R8(E,H), LdR8R8(E,L), NoImpl   , LdR8R8(E,A)],
+            [LdR8R8(H,B), LdR8R8(H,C)  , LdR8R8(H,D)   , LdR8R8(H,E), LdR8R8(H,H), LdR8R8(H,L), NoImpl   , LdR8R8(H,A), LdR8R8(L,B), LdR8R8(L,C)       , LdR8R8(L,D)   , LdR8R8(L,E), LdR8R8(L,H), LdR8R8(L,L), NoImpl   , LdR8R8(L,A)],
+            [NoImpl     , NoImpl       , NoImpl        , NoImpl     , NoImpl     , NoImpl     , NoImpl   , NoImpl     , LdR8R8(A,B), LdR8R8(A,C)       , LdR8R8(A,D)   , LdR8R8(A,E), LdR8R8(A,H), LdR8R8(A,L), NoImpl   , LdR8R8(A,A)],
+
+            [AddAR8(B)  , AddAR8(C)    , AddAR8(D)     , AddAR8(E)  , AddAR8(H)  , AddAR8(L)  , NoImpl   , AddAR8(A)  , AdcAR8(B)  , AdcAR8(C)         , AdcAR8(D)     , AdcAR8(E)  , AdcAR8(H)  , AdcAR8(L)  , NoImpl   , AdcAR8(A)  ],
+            [SubAR8(B)  , SubAR8(C)    , SubAR8(D)     , SubAR8(E)  , SubAR8(H)  , SubAR8(L)  , NoImpl   , SubAR8(A)  , SbcAR8(B)  , SbcAR8(C)         , SbcAR8(D)     , SbcAR8(E)  , SbcAR8(H)  , SbcAR8(L)  , NoImpl   , SbcAR8(A)  ],
+            [AndAR8(B)  , AndAR8(C)    , AndAR8(D)     , AndAR8(E)  , AndAR8(H)  , AndAR8(L)  , NoImpl   , AndAR8(A)  , XorAR8(B)  , XorAR8(C)         , XorAR8(D)     , XorAR8(E)  , XorAR8(H)  , XorAR8(L)  , NoImpl   , XorAR8(A)  ],
+            [OrAR8(B)   , OrAR8(C)     , OrAR8(D)      , OrAR8(E)   , OrAR8(H)   , OrAR8(L)   , NoImpl   , OrAR8(A)   , CpAR8(B)   , CpAR8(C)          , CpAR8(D)      , CpAR8(E)   , CpAR8(H)   , CpAR8(L)   , NoImpl   , CpAR8(A)   ],
+
+            [NoImpl     , NoImpl       , NoImpl        , NoImpl     , NoImpl     , NoImpl     , AddAN8   , NoImpl     , NoImpl     , NoImpl            , NoImpl        , NoImpl     , NoImpl     , NoImpl     , AdcAN8   , NoImpl     ],
+            [NoImpl     , NoImpl       , NoImpl        , Illegal    , NoImpl     , NoImpl     , SubAN8   , NoImpl     , NoImpl     , NoImpl            , NoImpl        , Illegal    , NoImpl     , Illegal    , SbcAN8   , NoImpl     ],
+            [NoImpl     , NoImpl       , NoImpl        , Illegal    , Illegal    , NoImpl     , AndAN8   , NoImpl     , NoImpl     , NoImpl            , NoImpl        , Illegal    , Illegal    , Illegal    , XorAN8   , NoImpl     ],
+            [NoImpl     , NoImpl       , NoImpl        , NoImpl     , Illegal    , NoImpl     , OrAN8    , NoImpl     , NoImpl     , NoImpl            , NoImpl        , NoImpl     , Illegal    , Illegal    , CpAN8    , NoImpl     ],
+        ]
+    }
+
+    fn decode_instruction(&self, opcode: u8) -> CpuInstruction {
+        let row = (opcode >> 4) as usize;
+        let col = (opcode & 0x0F) as usize;
+        self.instruction_set[row][col]
+    }
+
+    fn encode_instruction(&self, instruction: CpuInstruction) -> u8 {
+        let row = self
+            .instruction_set
+            .iter()
+            .position(|r| r.contains(&instruction))
+            .expect("Instruction not found in instruction set");
+        let col = self.instruction_set[row]
+            .iter()
+            .position(|&i| i == instruction)
+            .expect("Instruction not found in instruction set");
+        ((row as u8) << 4) | (col as u8)
+    }
+
+    fn fetch_immediate_number(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
         match instruction {
-            CpuInstruction::LdRImm8(register) => {
+            CpuInstruction::LdR8N8(register) => {
                 let value = self.fetch8(bus);
                 self.registers.set(register, value);
                 self.phase = CpuPhase::FetchOpcode;
             }
-            CpuInstruction::AddAImm8 => {
+            CpuInstruction::AddAN8 => {
                 let value = self.fetch8(bus);
                 let (result, flags) = self.registers.a.cpu_add(value);
                 self.registers.a = result;
@@ -205,15 +262,15 @@ impl Cpu {
             CpuPhase::FetchOpcode => {
                 let opcode = self.fetch8(bus);
 
-                let instruction = CpuInstruction::from(opcode);
+                let instruction = self.decode_instruction(opcode);
                 match instruction {
-                    CpuInstruction::LdRImm8(_) => {
-                        self.phase = CpuPhase::InstructionDecode(instruction);
+                    CpuInstruction::LdR8N8(_) => {
+                        self.phase = CpuPhase::FetchImmediateNumber(instruction);
                     }
-                    CpuInstruction::AddAImm8 => {
-                        self.phase = CpuPhase::InstructionDecode(instruction);
+                    CpuInstruction::AddAN8 => {
+                        self.phase = CpuPhase::FetchImmediateNumber(instruction);
                     }
-                    CpuInstruction::AddAR(register) => {
+                    CpuInstruction::AddAR8(register) => {
                         // only 1 m-cycle instruction, so we can directly decode it
                         let value = self.registers.get(register);
                         let (result, flags) = self.registers.a.cpu_add(value);
@@ -221,10 +278,13 @@ impl Cpu {
                         self.registers.f = flags;
                         self.phase = CpuPhase::FetchOpcode;
                     }
+                    _ => {
+                        panic!("No such instruction: {:?}", instruction);
+                    }
                 }
             }
-            CpuPhase::InstructionDecode(instruction) => {
-                self.decode_instruction(instruction, bus);
+            CpuPhase::FetchImmediateNumber(instruction) => {
+                self.fetch_immediate_number(instruction, bus);
             }
         }
     }
