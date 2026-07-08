@@ -1,4 +1,4 @@
-use crate::memory_bus::MemoryBus;
+use crate::{cpu::CpuReg8::C, memory_bus::MemoryBus};
 
 #[cfg(test)]
 mod tests;
@@ -75,7 +75,7 @@ struct CpuRegisters {
     b: u8, c: u8,
     d: u8, e: u8,
     h: u8, l: u8,
-    f: CpuFlagsRegister,
+    f: CpuFlagsReg,
 }
 
 impl CpuRegisters {
@@ -88,7 +88,7 @@ impl CpuRegisters {
             b: 0, c: 0,
             d: 0, e: 0,
             h: 0, l: 0,
-            f: CpuFlagsRegister::new(),
+            f: CpuFlagsReg::new(),
         }
     }
 
@@ -118,14 +118,14 @@ impl CpuRegisters {
     }
 }
 
-struct CpuFlagsRegister {
+struct CpuFlagsReg {
     zero: bool,
     subtract: bool,
     half_carry: bool,
     carry: bool,
 }
 
-impl CpuFlagsRegister {
+impl CpuFlagsReg {
     fn new() -> Self {
         Self {
             zero: false,
@@ -136,7 +136,7 @@ impl CpuFlagsRegister {
     }
 }
 
-impl From<u8> for CpuFlagsRegister {
+impl From<u8> for CpuFlagsReg {
     /**
      * For better understanding, I use binary literals to represent the flags in the 8-bit register.
      */
@@ -151,9 +151,9 @@ impl From<u8> for CpuFlagsRegister {
     }
 }
 
-impl From<CpuFlagsRegister> for u8 {
+impl From<CpuFlagsReg> for u8 {
     #[rustfmt::skip]
-    fn from(flags: CpuFlagsRegister) -> Self {
+    fn from(flags: CpuFlagsReg) -> Self {
         (if flags.zero             { 0b1000_0000 } else { 0 })
             | (if flags.subtract   { 0b0100_0000 } else { 0 })
             | (if flags.half_carry { 0b0010_0000 } else { 0 })
@@ -165,18 +165,31 @@ trait CpuArithmetic
 where
     Self: Sized,
 {
-    fn cpu_add(&self, value: u8) -> (Self, CpuFlagsRegister);
+    fn cpu_add(&self, value: u8) -> (Self, CpuFlagsReg);
+    fn cpu_sub(&self, value: u8) -> (Self, CpuFlagsReg);
 }
 
 impl CpuArithmetic for u8 {
-    fn cpu_add(&self, value: u8) -> (Self, CpuFlagsRegister) {
+    fn cpu_add(&self, value: u8) -> (Self, CpuFlagsReg) {
         let (result, carry) = self.overflowing_add(value);
 
-        let flags = CpuFlagsRegister {
+        let flags = CpuFlagsReg {
             zero: result == 0,
             subtract: false,
-            half_carry: (*self & 0x0F) + (value & 0x0F) > 0x0F,
+            half_carry: (*self & 0x0F) + (value & 0x0F) > 0x0F, // For BCD
             carry: carry,
+        };
+        (result, flags)
+    }
+
+    fn cpu_sub(&self, value: u8) -> (Self, CpuFlagsReg) {
+        let (result, borrow) = self.overflowing_sub(value);
+
+        let flags = CpuFlagsReg {
+            zero: result == 0,
+            subtract: true,
+            half_carry: (*self & 0x0F) < (value & 0x0F), // For BCD
+            carry: borrow,
         };
         (result, flags)
     }
@@ -261,6 +274,13 @@ impl Cpu {
                 self.registers.f = flags;
                 self.phase = CpuPhase::FetchOpcode;
             }
+            CpuInstruction::SubAImm8 => {
+                let value = self.fetch8(bus);
+                let (result, flags) = self.registers.a.cpu_sub(value);
+                self.registers.a = result;
+                self.registers.f = flags;
+                self.phase = CpuPhase::FetchOpcode;
+            }
             _ => {
                 panic!("No such instruction: {:?}", instruction);
             }
@@ -284,6 +304,16 @@ impl Cpu {
                         // only 1 m-cycle instruction, so we can directly decode it
                         let value = self.registers.get_r8(register);
                         let (result, flags) = self.registers.a.cpu_add(value);
+                        self.registers.a = result;
+                        self.registers.f = flags;
+                        self.phase = CpuPhase::FetchOpcode;
+                    }
+                    CpuInstruction::SubAImm8 => {
+                        self.phase = CpuPhase::FetchImm8(instruction);
+                    }
+                    CpuInstruction::SubAR8(register) => {
+                        let value = self.registers.get_r8(register);
+                        let (result, flags) = self.registers.a.cpu_sub(value);
                         self.registers.a = result;
                         self.registers.f = flags;
                         self.phase = CpuPhase::FetchOpcode;

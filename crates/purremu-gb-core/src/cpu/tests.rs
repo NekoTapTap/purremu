@@ -146,3 +146,110 @@ fn test_add_a_r() {
         assert_eq!(cpu.registers.pc, 0x0001);
     }
 }
+
+#[test]
+fn test_cpu_sub() {
+    // normal sub
+    let a = 0x20u8;
+    let b = 0x10u8;
+    let (result, flags) = a.cpu_sub(b);
+    assert_eq!(result, 0x10);
+    assert_eq!(flags.zero, false);
+    assert_eq!(flags.subtract, true);
+    assert_eq!(flags.half_carry, false);
+    assert_eq!(flags.carry, false);
+
+    // sub with half carry
+    let a = 0x10u8;
+    let b = 0x01u8;
+    let (result, flags) = a.cpu_sub(b);
+    assert_eq!(result, 0x0F);
+    assert_eq!(flags.zero, false);
+    assert_eq!(flags.subtract, true);
+    assert_eq!(flags.half_carry, true);
+    assert_eq!(flags.carry, false);
+
+    // sub with borrow but no zero
+    let a = 0x01u8;
+    let b = 0x02u8;
+    let (result, flags) = a.cpu_sub(b);
+    assert_eq!(result, 0xFF);
+    assert_eq!(flags.zero, false);
+    assert_eq!(flags.subtract, true);
+    assert_eq!(flags.half_carry, true);
+    assert_eq!(flags.carry, true);
+
+    // sub with zero result
+    let a = 0x01u8;
+    let b = 0x01u8;
+    let (result, flags) = a.cpu_sub(b);
+    assert_eq!(result, 0x00);
+    assert_eq!(flags.zero, true);
+    assert_eq!(flags.subtract, true);
+    assert_eq!(flags.half_carry, false);
+    assert_eq!(flags.carry, false);
+}
+
+#[test]
+fn test_sub_a_imm8() {
+    let mut bus = MemoryBus::new();
+    let mut cpu = Cpu::new();
+    let initial_a_value = 0x10;
+    let imm_value = 0x20;
+    bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::SubAImm8); // SUB A, imm8
+    bus.rom[0x0001] = imm_value;
+    cpu.registers.set_r8(CpuReg8::A, initial_a_value);
+
+    cpu.step_cycle(&bus);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchImm8(CpuInstruction::SubAImm8),
+        "test failed for SUB A, imm8"
+    );
+    assert_eq!(cpu.registers.pc, 0x0001);
+
+    cpu.step_cycle(&bus);
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+    assert_eq!(
+        cpu.registers.a,
+        initial_a_value.overflowing_sub(imm_value).0
+    );
+    assert_eq!(cpu.registers.pc, 0x0002);
+}
+
+#[test]
+fn test_sub_a_r() {
+    for register in CpuReg8::iter() {
+        let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
+        let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
+        let r_value = if register == CpuReg8::A {
+            // if register is A, use the same value as initial_a_value to test subtracting A from itself
+            initial_a_value
+        } else {
+            rand::random_range(u8::MIN..=u8::MAX) // Random value for testing
+        };
+        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::SubAR8(register)); // SUB A, r
+
+        cpu.registers.set_r8(CpuReg8::A, initial_a_value);
+        cpu.registers.set_r8(register, r_value);
+        cpu.step_cycle(&bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchOpcode,
+            "test failed for SUB A, {:?}",
+            register
+        );
+        assert_eq!(
+            cpu.registers.a,
+            initial_a_value.overflowing_sub(r_value).0,
+            "register: {:?}, initial_a_value: {}, r_value: {}, result: {}",
+            register,
+            initial_a_value,
+            r_value,
+            cpu.registers.a
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+    }
+}
