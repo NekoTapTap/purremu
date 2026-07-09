@@ -7,6 +7,13 @@ This is a list of references that I used to learn.
 - [Learn Rust](https://www.rust-lang.org/learn) - The official Rust website for learning Rust.
 - [Cargo Workspaces](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html) - We use cargo workspaces in this project.
 
+## Computer Science
+
+### Computer Architecture
+
+- [计算机体系结构基础](https://foxsen.github.io/archbase/) - A e-book about computer architecture in Chinese.
+- [Endianness](https://en.wikipedia.org/wiki/Endianness) - Why do we have little-endian and big-endian?
+
 ## GameBoy
 
 ### Emulation

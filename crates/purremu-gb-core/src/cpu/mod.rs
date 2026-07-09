@@ -7,6 +7,8 @@ mod tests;
 pub enum CpuPhase {
     FetchOpcode,
     FetchImm8(CpuInstruction),
+    FetchImm16Low(CpuInstruction),
+    FetchImm16High(CpuInstruction),
 }
 
 #[rustfmt::skip]
@@ -25,7 +27,6 @@ pub enum CpuReg16 {
     BC,
     DE,
     HL,
-    SP,
 }
 
 #[rustfmt::skip]
@@ -113,6 +114,30 @@ impl CpuRegisters {
             CpuReg8::E => self.e,
             CpuReg8::H => self.h,
             CpuReg8::L => self.l,
+        }
+    }
+
+    fn set_r16_low(&mut self, register: CpuReg16, value: u8) {
+        match register {
+            CpuReg16::BC => self.c = value,
+            CpuReg16::DE => self.e = value,
+            CpuReg16::HL => self.l = value,
+        }
+    }
+
+    fn set_r16_high(&mut self, register: CpuReg16, value: u8) {
+        match register {
+            CpuReg16::BC => self.b = value,
+            CpuReg16::DE => self.d = value,
+            CpuReg16::HL => self.h = value,
+        }
+    }
+
+    fn get_r16(&self, register: CpuReg16) -> u16 {
+        match register {
+            CpuReg16::BC => ((self.b as u16) << 8) | (self.c as u16),
+            CpuReg16::DE => ((self.d as u16) << 8) | (self.e as u16),
+            CpuReg16::HL => ((self.h as u16) << 8) | (self.l as u16),
         }
     }
 }
@@ -265,7 +290,7 @@ impl Cpu {
         ((row as u8) << 4) | (col as u8)
     }
 
-    fn fetch_immediate_number(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
+    fn fetch_imm8(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
         match instruction {
             CpuInstruction::LdR8Imm8(register) => {
                 let value = self.fetch8(bus);
@@ -324,47 +349,86 @@ impl Cpu {
         self.phase = CpuPhase::FetchOpcode;
     }
 
+    fn fetch_imm16_low(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
+        let low_byte = self.fetch8(bus);
+        match instruction {
+            CpuInstruction::LdR16Imm16(register) => {
+                self.phase = CpuPhase::FetchImm16High(instruction);
+                self.registers.set_r16_low(register, low_byte);
+            }
+            _ => {
+                panic!("No such instruction: {:?}", instruction);
+            }
+        }
+    }
+
+    fn fetch_imm16_high(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
+        let high_byte = self.fetch8(bus);
+        match instruction {
+            CpuInstruction::LdR16Imm16(register) => {
+                self.registers.set_r16_high(register, high_byte);
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            _ => {
+                panic!("No such instruction: {:?}", instruction);
+            }
+        }
+    }
+
+    fn phase_fetch_opcode(&mut self, bus: &MemoryBus) {
+        let opcode = self.fetch8(bus);
+
+        let instruction = self.decode_instruction(opcode);
+        match instruction {
+            CpuInstruction::LdR8Imm8(_) => {
+                self.phase = CpuPhase::FetchImm8(instruction);
+            }
+            CpuInstruction::AddAImm8 => {
+                self.phase = CpuPhase::FetchImm8(instruction);
+            }
+            CpuInstruction::AddAR8(register) => {
+                self.phase_add_a_r8(register, false);
+            }
+            CpuInstruction::AdcAImm8 => {
+                self.phase = CpuPhase::FetchImm8(instruction);
+            }
+            CpuInstruction::AdcAR8(register) => {
+                self.phase_add_a_r8(register, self.registers.f.carry);
+            }
+            CpuInstruction::SubAImm8 => {
+                self.phase = CpuPhase::FetchImm8(instruction);
+            }
+            CpuInstruction::SubAR8(register) => {
+                self.phase_sub_a_r8(register, false);
+            }
+            CpuInstruction::SbcAImm8 => {
+                self.phase = CpuPhase::FetchImm8(instruction);
+            }
+            CpuInstruction::SbcAR8(register) => {
+                self.phase_sub_a_r8(register, self.registers.f.carry);
+            }
+            CpuInstruction::LdR16Imm16(_) => {
+                self.phase = CpuPhase::FetchImm16Low(instruction);
+            }
+            _ => {
+                panic!("No such instruction: {:?}", instruction);
+            }
+        }
+    }
+
     fn step_cycle(&mut self, bus: &MemoryBus) {
         match self.phase {
             CpuPhase::FetchOpcode => {
-                let opcode = self.fetch8(bus);
-
-                let instruction = self.decode_instruction(opcode);
-                match instruction {
-                    CpuInstruction::LdR8Imm8(_) => {
-                        self.phase = CpuPhase::FetchImm8(instruction);
-                    }
-                    CpuInstruction::AddAImm8 => {
-                        self.phase = CpuPhase::FetchImm8(instruction);
-                    }
-                    CpuInstruction::AddAR8(register) => {
-                        self.phase_add_a_r8(register, false);
-                    }
-                    CpuInstruction::AdcAImm8 => {
-                        self.phase = CpuPhase::FetchImm8(instruction);
-                    }
-                    CpuInstruction::AdcAR8(register) => {
-                        self.phase_add_a_r8(register, self.registers.f.carry);
-                    }
-                    CpuInstruction::SubAImm8 => {
-                        self.phase = CpuPhase::FetchImm8(instruction);
-                    }
-                    CpuInstruction::SubAR8(register) => {
-                        self.phase_sub_a_r8(register, false);
-                    }
-                    CpuInstruction::SbcAImm8 => {
-                        self.phase = CpuPhase::FetchImm8(instruction);
-                    }
-                    CpuInstruction::SbcAR8(register) => {
-                        self.phase_sub_a_r8(register, self.registers.f.carry);
-                    }
-                    _ => {
-                        panic!("No such instruction: {:?}", instruction);
-                    }
-                }
+                self.phase_fetch_opcode(bus);
             }
             CpuPhase::FetchImm8(instruction) => {
-                self.fetch_immediate_number(instruction, bus);
+                self.fetch_imm8(instruction, bus);
+            }
+            CpuPhase::FetchImm16Low(instruction) => {
+                self.fetch_imm16_low(instruction, bus);
+            }
+            CpuPhase::FetchImm16High(instruction) => {
+                self.fetch_imm16_high(instruction, bus);
             }
         }
     }

@@ -1,6 +1,6 @@
 use strum::IntoEnumIterator;
 
-use crate::cpu::{Cpu, CpuArithmetic, CpuInstruction, CpuPhase, CpuReg8};
+use crate::cpu::{Cpu, CpuArithmetic, CpuInstruction, CpuPhase, CpuReg8, CpuReg16};
 use crate::memory_bus::MemoryBus;
 
 #[test]
@@ -271,5 +271,54 @@ fn test_sub_a_r() {
             cpu.registers.a
         );
         assert_eq!(cpu.registers.pc, 0x0001);
+    }
+}
+
+#[test]
+fn test_ld_r16_imm16() {
+    for register in CpuReg16::iter() {
+        let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
+        let low_byte = rand::random_range(u8::MIN..=u8::MAX);
+        let high_byte = rand::random_range(u8::MIN..=u8::MAX);
+        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::LdR16Imm16(register)); // LD rr, imm16
+        bus.rom[0x0001] = low_byte;
+        bus.rom[0x0002] = high_byte;
+
+        assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+
+        cpu.step_cycle(&bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchImm16Low(CpuInstruction::LdR16Imm16(register)),
+            "test failed for register {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+
+        cpu.step_cycle(&bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchImm16High(CpuInstruction::LdR16Imm16(register)),
+            "test failed for register {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0002);
+
+        cpu.step_cycle(&bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchOpcode,
+            "test failed for register {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0003);
+        assert_eq!(
+            cpu.registers.get_r16(register),
+            ((high_byte as u16) << 8) | (low_byte as u16),
+            "test failed for register {:?}",
+            register
+        );
     }
 }
