@@ -467,7 +467,7 @@ fn test_and_a_imm8() {
     assert_eq!(
         cpu.registers.a,
         initial_a_value & imm_value,
-            "initial_a_value: {:08b}
+        "initial_a_value: {:08b}
  r_value:         {:08b}
  result:          {:08b}",
         initial_a_value,
@@ -501,7 +501,7 @@ fn test_or_a_imm8() {
     assert_eq!(
         cpu.registers.a,
         initial_a_value | imm_value,
-            "initial_a_value: {:08b}
+        "initial_a_value: {:08b}
  r_value:         {:08b}
  result:          {:08b}",
         initial_a_value,
@@ -535,7 +535,7 @@ fn test_xor_a_imm8() {
     assert_eq!(
         cpu.registers.a,
         initial_a_value ^ imm_value,
-            "initial_a_value: {:08b}
+        "initial_a_value: {:08b}
  r_value:         {:08b}
  result:          {:08b}",
         initial_a_value,
@@ -543,4 +543,57 @@ fn test_xor_a_imm8() {
         cpu.registers.a
     );
     assert_eq!(cpu.registers.pc, 0x0002);
+}
+
+#[test]
+fn test_add_hl_r16() {
+    for register in CpuReg16::iter() {
+        let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
+        let src_value = rand::random_range(u16::MIN..=u16::MAX);
+        let dest_value = if register == CpuReg16::HL {
+            // If the register is HL, we want to test adding HL to itself, so we set src_value to dest_value
+            src_value
+        } else {
+            rand::random_range(u16::MIN..=u16::MAX)
+        };
+        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::AddHlR16(register)); // ADD HL, rr
+
+        cpu.registers.set_r16(CpuReg16::HL, dest_value);
+        cpu.registers.set_r16(register, src_value);
+
+        cpu.step_cycle(&bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchR16(CpuInstruction::AddHlR16(register)),
+            "test failed for ADD HL, {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+        assert_eq!(
+            cpu.registers.get_r16(CpuReg16::HL),
+            dest_value,
+            "don't touch the HL register yet, we need to simulate this 1 byte instruction taking 2 cycles"
+        );
+
+        cpu.step_cycle(&bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchOpcode,
+            "test failed for ADD HL, {:?}",
+            register
+        );
+        assert_eq!(
+            cpu.registers.get_r16(CpuReg16::HL),
+            dest_value.overflowing_add(src_value).0,
+            "dest_register: {:?}, dest_value: {}, src_register: {:?}, src_value: {}, result: {}",
+            CpuReg16::HL,
+            dest_value,
+            register,
+            src_value,
+            cpu.registers.get_r16(CpuReg16::HL)
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+    }
 }

@@ -9,6 +9,7 @@ pub enum CpuPhase {
     FetchImm8(CpuInstruction),
     FetchImm16Low(CpuInstruction),
     FetchImm16High(CpuInstruction),
+    FetchR16(CpuInstruction),
 }
 
 #[rustfmt::skip]
@@ -45,7 +46,7 @@ pub enum CpuInstruction {
 
     AddAImm8,
     AddAR8(CpuReg8),
-    AddR16R16(CpuReg16, CpuReg16),
+    AddHlR16(CpuReg16),
     AdcAImm8,
     AdcAR8(CpuReg8),
 
@@ -133,6 +134,13 @@ impl CpuRegisters {
         }
     }
 
+    fn set_r16(&mut self, register: CpuReg16, value: u16) {
+        let high = (value >> 8) as u8;
+        let low = (value & 0xFF) as u8;
+        self.set_r16_high(register, high);
+        self.set_r16_low(register, low);
+    }
+
     fn get_r16(&self, register: CpuReg16) -> u16 {
         match register {
             CpuReg16::BC => ((self.b as u16) << 8) | (self.c as u16),
@@ -189,11 +197,11 @@ trait CpuArithmetic
 where
     Self: Sized,
 {
-    fn cpu_add(&self, value: u8, carry_flag: bool) -> (Self, CpuFlagsReg);
-    fn cpu_sub(&self, value: u8, borrow_flag: bool) -> (Self, CpuFlagsReg);
-    fn cpu_and(&self, value: u8) -> (Self, CpuFlagsReg);
-    fn cpu_or(&self, value: u8) -> (Self, CpuFlagsReg);
-    fn cpu_xor(&self, value: u8) -> (Self, CpuFlagsReg);
+    fn cpu_add(&self, value: Self, carry_flag: bool) -> (Self, CpuFlagsReg);
+    fn cpu_sub(&self, value: Self, borrow_flag: bool) -> (Self, CpuFlagsReg);
+    fn cpu_and(&self, value: Self) -> (Self, CpuFlagsReg);
+    fn cpu_or(&self, value: Self) -> (Self, CpuFlagsReg);
+    fn cpu_xor(&self, value: Self) -> (Self, CpuFlagsReg);
 }
 
 impl CpuArithmetic for u8 {
@@ -261,6 +269,50 @@ impl CpuArithmetic for u8 {
     }
 }
 
+impl CpuArithmetic for u16 {
+    fn cpu_add(&self, value: u16, carry_flag: bool) -> (Self, CpuFlagsReg) {
+        let carry = u16::from(carry_flag);
+        let result_u32 = *self as u32 + value as u32 + carry as u32;
+        let result_carry = result_u32 > 0xFFFF;
+        let result = result_u32 as u16;
+
+        let flags = CpuFlagsReg {
+            zero: false, // 16-bit operations do not affect the Z flag
+            subtract: false,
+            half_carry: ((*self & 0x0FFF) + (value & 0x0FFF) + carry) > 0x0FFF, // For BCD
+            carry: result_carry,
+        };
+        (result, flags)
+    }
+
+    fn cpu_sub(&self, value: u16, borrow_flag: bool) -> (Self, CpuFlagsReg) {
+        let borrow = u16::from(borrow_flag);
+        let result_u32 = (*self as u32).wrapping_sub(value as u32 + borrow as u32);
+        let result = result_u32 as u16;
+        let borrow_occurred = (*self as u32) < (value as u32 + borrow as u32);
+
+        let flags = CpuFlagsReg {
+            zero: false, // 16-bit operations do not affect the Z flag
+            subtract: true,
+            half_carry: (*self & 0x0FFF) < (value & 0x0FFF) + borrow, // For BCD
+            carry: borrow_occurred,
+        };
+        (result, flags)
+    }
+
+    fn cpu_and(&self, _value: u16) -> (Self, CpuFlagsReg) {
+        unimplemented!("AND operation is not defined for 16-bit values");
+    }
+
+    fn cpu_or(&self, _value: u16) -> (Self, CpuFlagsReg) {
+        unimplemented!("OR operation is not defined for 16-bit values");
+    }
+
+    fn cpu_xor(&self, _value: u16) -> (Self, CpuFlagsReg) {
+        unimplemented!("XOR operation is not defined for 16-bit values");
+    }
+}
+
 pub struct Cpu {
     divider: u8,
     phase: CpuPhase,
@@ -285,9 +337,9 @@ impl Cpu {
         use CpuReg16::*;
 
         [
-            [NoImpl     , LdR16Imm16(BC), LdR16memR8(BC,A), IncR16(B,C), IncR8(B)   , DecR8(B)   , LdR8Imm8(B), NoImpl     , NoImpl     , AddR16R16(HL,BC), LdR8R16mem(A,BC), DecR16(BC), IncR8(C)   , DecR8(C)   , LdR8Imm8(C), NoImpl     ],
-            [NoImpl     , LdR16Imm16(DE), LdR16memR8(DE,A), IncR16(D,E), IncR8(D)   , DecR8(D)   , LdR8Imm8(D), NoImpl     , NoImpl     , AddR16R16(HL,DE), LdR8R16mem(A,DE), DecR16(DE), IncR8(E)   , DecR8(E)   , LdR8Imm8(E), NoImpl     ],
-            [NoImpl     , LdR16Imm16(HL), LdR16memR8(HL,A), IncR16(H,L), IncR8(H)   , DecR8(H)   , LdR8Imm8(H), NoImpl     , NoImpl     , AddR16R16(HL,HL), LdR8R16mem(A,HL), DecR16(HL), IncR8(L)   , DecR8(L)   , LdR8Imm8(L), NoImpl     ],
+            [NoImpl     , LdR16Imm16(BC), LdR16memR8(BC,A), IncR16(B,C), IncR8(B)   , DecR8(B)   , LdR8Imm8(B), NoImpl     , NoImpl     , AddHlR16(BC), LdR8R16mem(A,BC), DecR16(BC), IncR8(C)   , DecR8(C)   , LdR8Imm8(C), NoImpl     ],
+            [NoImpl     , LdR16Imm16(DE), LdR16memR8(DE,A), IncR16(D,E), IncR8(D)   , DecR8(D)   , LdR8Imm8(D), NoImpl     , NoImpl     , AddHlR16(DE), LdR8R16mem(A,DE), DecR16(DE), IncR8(E)   , DecR8(E)   , LdR8Imm8(E), NoImpl     ],
+            [NoImpl     , LdR16Imm16(HL), LdR16memR8(HL,A), IncR16(H,L), IncR8(H)   , DecR8(H)   , LdR8Imm8(H), NoImpl     , NoImpl     , AddHlR16(HL), LdR8R16mem(A,HL), DecR16(HL), IncR8(L)   , DecR8(L)   , LdR8Imm8(L), NoImpl     ],
             [NoImpl     , NoImpl       , NoImpl        , NoImpl     , NoImpl     , NoImpl     , NoImpl   , NoImpl     , NoImpl     , NoImpl            , NoImpl        , NoImpl     , IncR8(A)   , DecR8(A)   , LdR8Imm8(A), NoImpl     ],
 
             [LdR8R8(B,B), LdR8R8(B,C)  , LdR8R8(B,D)   , LdR8R8(B,E), LdR8R8(B,H), LdR8R8(B,L), NoImpl   , LdR8R8(B,A), LdR8R8(C,B), LdR8R8(C,C)       , LdR8R8(C,D)   , LdR8R8(C,E), LdR8R8(C,H), LdR8R8(C,L), NoImpl   , LdR8R8(C,A)],
@@ -456,6 +508,23 @@ impl Cpu {
         }
     }
 
+    fn fetch_r16(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
+        match instruction {
+            CpuInstruction::AddHlR16(src) => {
+                let src_value = self.registers.get_r16(src);
+                let dest_value = self.registers.get_r16(CpuReg16::HL);
+                let (result, flags) = dest_value.cpu_add(src_value, false);
+                self.registers.set_r16_high(CpuReg16::HL, (result >> 8) as u8);
+                self.registers.set_r16_low(CpuReg16::HL, result as u8);
+                self.registers.f = flags;
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            _ => {
+                panic!("No such instruction: {:?}", instruction);
+            }
+        }
+    }
+
     fn phase_fetch_opcode(&mut self, bus: &MemoryBus) {
         let opcode = self.fetch8(bus);
 
@@ -475,6 +544,9 @@ impl Cpu {
             }
             CpuInstruction::AdcAR8(register) => {
                 self.phase_add_a_r8(register, self.registers.f.carry);
+            }
+            CpuInstruction::AddHlR16(_) => {
+                self.phase = CpuPhase::FetchR16(instruction);
             }
             CpuInstruction::SubAImm8 => {
                 self.phase = CpuPhase::FetchImm8(instruction);
@@ -528,6 +600,9 @@ impl Cpu {
             }
             CpuPhase::FetchImm16High(instruction) => {
                 self.fetch_imm16_high(instruction, bus);
+            }
+            CpuPhase::FetchR16(instruction) => {
+                self.fetch_r16(instruction, bus);
             }
         }
     }
