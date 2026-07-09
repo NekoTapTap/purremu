@@ -23,4 +23,16 @@ impl MemoryBus {
             _ => 0,
         }
     }
+
+    pub fn write8(&mut self, addr: u16, value: u8) {
+        match addr {
+            0x0000..=0x7FFF => self.rom[addr as usize] = value,
+            0x8000..=0x9FFF => {} // vram
+            0xA000..=0xBFFF => self.ram[(addr - 0xA000) as usize] = value,
+            0xC000..=0xDFFF => self.ram[(addr - 0xC000) as usize] = value,
+            0xE000..=0xFDFF => self.ram[(addr - 0xE000) as usize] = value,
+            // 0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize] = value,
+            _ => {}
+        }
+    }
 }

@@ -3,6 +3,10 @@ use strum::IntoEnumIterator;
 use crate::cpu::{Cpu, CpuArithmetic, CpuInstruction, CpuPhase, CpuReg8, CpuReg16};
 use crate::memory_bus::MemoryBus;
 
+fn rand_external_ram_addr() -> u16 {
+    rand::random_range(0xA000..=0xFDFF)
+}
+
 #[test]
 fn test_ld_r_imm8() {
     for register in CpuReg8::iter() {
@@ -15,7 +19,7 @@ fn test_ld_r_imm8() {
 
         assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
 
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchImm8(CpuInstruction::LdR8Imm8(register)),
@@ -24,7 +28,7 @@ fn test_ld_r_imm8() {
         );
         assert_eq!(cpu.registers.pc, 0x0001);
 
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         match register {
             CpuReg8::A => assert_eq!(cpu.registers.a, expected_register_value),
             CpuReg8::B => assert_eq!(cpu.registers.b, expected_register_value),
@@ -103,7 +107,7 @@ fn test_add_a_imm8() {
     bus.rom[0x0001] = imm_value;
     cpu.registers.set_r8(CpuReg8::A, initial_a_value);
 
-    cpu.step_cycle(&bus);
+    cpu.step_cycle(&mut bus);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchImm8(CpuInstruction::AddAImm8),
@@ -111,7 +115,7 @@ fn test_add_a_imm8() {
     );
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&bus);
+    cpu.step_cycle(&mut bus);
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(
         cpu.registers.a,
@@ -137,7 +141,7 @@ fn test_add_a_r() {
 
         cpu.registers.set_r8(CpuReg8::A, initial_a_value);
         cpu.registers.set_r8(register, r_value);
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -220,7 +224,7 @@ fn test_sub_a_imm8() {
     bus.rom[0x0001] = imm_value;
     cpu.registers.set_r8(CpuReg8::A, initial_a_value);
 
-    cpu.step_cycle(&bus);
+    cpu.step_cycle(&mut bus);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchImm8(CpuInstruction::SubAImm8),
@@ -228,7 +232,7 @@ fn test_sub_a_imm8() {
     );
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&bus);
+    cpu.step_cycle(&mut bus);
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(
         cpu.registers.a,
@@ -254,7 +258,7 @@ fn test_sub_a_r() {
 
         cpu.registers.set_r8(CpuReg8::A, initial_a_value);
         cpu.registers.set_r8(register, r_value);
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -288,7 +292,7 @@ fn test_ld_r16_imm16() {
 
         assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
 
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchImm16Low(CpuInstruction::LdR16Imm16(register)),
@@ -297,7 +301,7 @@ fn test_ld_r16_imm16() {
         );
         assert_eq!(cpu.registers.pc, 0x0001);
 
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchImm16High(CpuInstruction::LdR16Imm16(register)),
@@ -306,7 +310,7 @@ fn test_ld_r16_imm16() {
         );
         assert_eq!(cpu.registers.pc, 0x0002);
 
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -340,7 +344,7 @@ fn test_and_a_r8() {
 
         cpu.registers.set_r8(CpuReg8::A, initial_a_value);
         cpu.registers.set_r8(register, r_value);
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -380,7 +384,7 @@ fn test_or_a_r8() {
 
         cpu.registers.set_r8(CpuReg8::A, initial_a_value);
         cpu.registers.set_r8(register, r_value);
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -420,7 +424,7 @@ fn test_xor_a_r8() {
 
         cpu.registers.set_r8(CpuReg8::A, initial_a_value);
         cpu.registers.set_r8(register, r_value);
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -454,7 +458,7 @@ fn test_and_a_imm8() {
     bus.rom[0x0001] = imm_value;
 
     cpu.registers.set_r8(CpuReg8::A, initial_a_value);
-    cpu.step_cycle(&bus);
+    cpu.step_cycle(&mut bus);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchImm8(CpuInstruction::AndAImm8),
@@ -462,7 +466,7 @@ fn test_and_a_imm8() {
     );
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&bus);
+    cpu.step_cycle(&mut bus);
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(
         cpu.registers.a,
@@ -488,7 +492,7 @@ fn test_or_a_imm8() {
     bus.rom[0x0001] = imm_value;
 
     cpu.registers.set_r8(CpuReg8::A, initial_a_value);
-    cpu.step_cycle(&bus);
+    cpu.step_cycle(&mut bus);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchImm8(CpuInstruction::OrAImm8),
@@ -496,7 +500,7 @@ fn test_or_a_imm8() {
     );
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&bus);
+    cpu.step_cycle(&mut bus);
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(
         cpu.registers.a,
@@ -522,7 +526,7 @@ fn test_xor_a_imm8() {
     bus.rom[0x0001] = imm_value;
 
     cpu.registers.set_r8(CpuReg8::A, initial_a_value);
-    cpu.step_cycle(&bus);
+    cpu.step_cycle(&mut bus);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchImm8(CpuInstruction::XorAImm8),
@@ -530,7 +534,7 @@ fn test_xor_a_imm8() {
     );
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&bus);
+    cpu.step_cycle(&mut bus);
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(
         cpu.registers.a,
@@ -563,7 +567,7 @@ fn test_add_hl_r16() {
         cpu.registers.set_r16(CpuReg16::HL, dest_value);
         cpu.registers.set_r16(register, src_value);
 
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchR16(CpuInstruction::AddHlR16(register)),
@@ -577,7 +581,7 @@ fn test_add_hl_r16() {
             "don't touch the HL register yet, we need to simulate this 1 byte instruction taking 2 cycles"
         );
 
-        cpu.step_cycle(&bus);
+        cpu.step_cycle(&mut bus);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -596,4 +600,147 @@ fn test_add_hl_r16() {
         );
         assert_eq!(cpu.registers.pc, 0x0001);
     }
+}
+
+#[test]
+fn test_ld_a_r16mem() {
+    use CpuReg8::A;
+
+    for r16 in CpuReg16::iter() {
+        let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
+        let r16_value = rand_external_ram_addr(); // Random value in the range of external RAM
+        let mem_value = rand::random_range(u8::MIN..=u8::MAX);
+        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::LdAR16mem(r16)); // LD A, (rr)
+        bus.write8(r16_value, mem_value);
+
+        cpu.registers.set_r16(r16, r16_value);
+        cpu.step_cycle(&mut bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchR16(CpuInstruction::LdAR16mem(r16)),
+            "test failed for LD {:?}, ({:?})",
+            A,
+            r16
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+        assert_eq!(
+            cpu.registers.get_r8(A),
+            0,
+            "don't touch the {:?} register yet, we need to simulate this 1 byte instruction taking 2 cycles",
+            A
+        );
+
+        cpu.step_cycle(&mut bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchOpcode,
+            "test failed for LD {:?}, ({:?})",
+            A,
+            r16
+        );
+        assert_eq!(
+            cpu.registers.get_r8(A),
+            mem_value,
+            "register: {:?}, r16: {:?}, r16_value: {}, mem_value: {}, result: {}",
+            A,
+            r16,
+            r16_value,
+            mem_value,
+            cpu.registers.get_r8(A)
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+    }
+}
+
+#[test]
+fn test_ld_hl_mem_r8() {
+    for register in CpuReg8::iter() {
+        let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
+        let hl_value = rand_external_ram_addr(); // Random value in the range of external RAM
+        let r_value = if register == CpuReg8::H {
+            (hl_value >> 8) as u8 // Use the high byte of hl_value for testing
+        } else if register == CpuReg8::L {
+            (hl_value & 0xFF) as u8 // Use the low byte of hl_value for testing
+        } else {
+            rand::random_range(u8::MIN..=u8::MAX)
+        };
+        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::LdHlMemR8(register)); // LD (HL), r
+
+        cpu.registers.set_r16(CpuReg16::HL, hl_value);
+        cpu.registers.set_r8(register, r_value);
+        cpu.step_cycle(&mut bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchR16(CpuInstruction::LdHlMemR8(register)),
+            "test failed for LD (HL), {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+        assert_eq!(
+            bus.read8(hl_value),
+            0,
+            "don't touch the memory at HL yet, we need to simulate this 1 byte instruction taking 2 cycles"
+        );
+
+        cpu.step_cycle(&mut bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchOpcode,
+            "test failed for LD (HL), {:?}",
+            register
+        );
+        assert_eq!(
+            bus.read8(hl_value),
+            r_value,
+            "register: {:?}, r_value: {}, hl: {}, result: {}",
+            register,
+            r_value,
+            hl_value,
+            bus.read8(hl_value)
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+    }
+}
+
+#[test]
+fn test_ld_hl_mem_imm8() {
+    let instruction = CpuInstruction::LdHlMemImm8;
+    let mut bus = MemoryBus::new();
+    let mut cpu = Cpu::new();
+
+    let hl_value = rand_external_ram_addr(); // Random value in the range of external RAM
+    let imm_value = rand::random_range(u8::MIN..=u8::MAX);
+    bus.rom[0x0000] = cpu.encode_instruction(instruction); // LD (HL), imm8
+    bus.rom[0x0001] = imm_value;
+
+    cpu.registers.set_r16(CpuReg16::HL, hl_value);
+    cpu.step_cycle(&mut bus);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchR16(instruction),
+        "test failed for LD (HL), imm8"
+    );
+    assert_eq!(cpu.registers.pc, 0x0001);
+
+    cpu.step_cycle(&mut bus);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchImm8(instruction),
+        "test failed for LD (HL), imm8"
+    );
+    assert_eq!(bus.read8(hl_value), 0);
+    assert_eq!(cpu.registers.pc, 0x0001);
+
+    cpu.step_cycle(&mut bus);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchOpcode,
+        "test failed for LD (HL), imm8"
+    );
+    assert_eq!(bus.read8(hl_value), imm_value);
+    assert_eq!(cpu.registers.pc, 0x0002);
 }
