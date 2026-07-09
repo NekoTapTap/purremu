@@ -191,6 +191,9 @@ where
 {
     fn cpu_add(&self, value: u8, carry_flag: bool) -> (Self, CpuFlagsReg);
     fn cpu_sub(&self, value: u8, borrow_flag: bool) -> (Self, CpuFlagsReg);
+    fn cpu_and(&self, value: u8) -> (Self, CpuFlagsReg);
+    fn cpu_or(&self, value: u8) -> (Self, CpuFlagsReg);
+    fn cpu_xor(&self, value: u8) -> (Self, CpuFlagsReg);
 }
 
 impl CpuArithmetic for u8 {
@@ -220,6 +223,39 @@ impl CpuArithmetic for u8 {
             subtract: true,
             half_carry: (*self & 0x0F) < (value & 0x0F) + borrow, // For BCD
             carry: borrow_occurred,
+        };
+        (result, flags)
+    }
+
+    fn cpu_and(&self, value: u8) -> (Self, CpuFlagsReg) {
+        let result = *self & value;
+        let flags = CpuFlagsReg {
+            zero: result == 0,
+            subtract: false,
+            half_carry: true, // For AND operation, H flag is set
+            carry: false,
+        };
+        (result, flags)
+    }
+
+    fn cpu_or(&self, value: u8) -> (Self, CpuFlagsReg) {
+        let result = *self | value;
+        let flags = CpuFlagsReg {
+            zero: result == 0,
+            subtract: false,
+            half_carry: false,
+            carry: false,
+        };
+        (result, flags)
+    }
+
+    fn cpu_xor(&self, value: u8) -> (Self, CpuFlagsReg) {
+        let result = *self ^ value;
+        let flags = CpuFlagsReg {
+            zero: result == 0,
+            subtract: false,
+            half_carry: false,
+            carry: false,
         };
         (result, flags)
     }
@@ -325,6 +361,27 @@ impl Cpu {
                 self.registers.f = flags;
                 self.phase = CpuPhase::FetchOpcode;
             }
+            CpuInstruction::AndAImm8 => {
+                let value = self.fetch8(bus);
+                let (result, flags) = self.registers.a.cpu_and(value);
+                self.registers.a = result;
+                self.registers.f = flags;
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::OrAImm8 => {
+                let value = self.fetch8(bus);
+                let (result, flags) = self.registers.a.cpu_or(value);
+                self.registers.a = result;
+                self.registers.f = flags;
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::XorAImm8 => {
+                let value = self.fetch8(bus);
+                let (result, flags) = self.registers.a.cpu_xor(value);
+                self.registers.a = result;
+                self.registers.f = flags;
+                self.phase = CpuPhase::FetchOpcode;
+            }
             _ => {
                 panic!("No such instruction: {:?}", instruction);
             }
@@ -344,6 +401,30 @@ impl Cpu {
     fn phase_sub_a_r8(&mut self, register: CpuReg8, borrow_flag: bool) {
         let value = self.registers.get_r8(register);
         let (result, flags) = self.registers.a.cpu_sub(value, borrow_flag);
+        self.registers.a = result;
+        self.registers.f = flags;
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    fn phase_and_a_r8(&mut self, register: CpuReg8) {
+        let value = self.registers.get_r8(register);
+        let (result, flags) = self.registers.a.cpu_and(value);
+        self.registers.a = result;
+        self.registers.f = flags;
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    fn phase_or_a_r8(&mut self, register: CpuReg8) {
+        let value = self.registers.get_r8(register);
+        let (result, flags) = self.registers.a.cpu_or(value);
+        self.registers.a = result;
+        self.registers.f = flags;
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    fn phase_xor_a_r8(&mut self, register: CpuReg8) {
+        let value = self.registers.get_r8(register);
+        let (result, flags) = self.registers.a.cpu_xor(value);
         self.registers.a = result;
         self.registers.f = flags;
         self.phase = CpuPhase::FetchOpcode;
@@ -409,6 +490,24 @@ impl Cpu {
             }
             CpuInstruction::LdR16Imm16(_) => {
                 self.phase = CpuPhase::FetchImm16Low(instruction);
+            }
+            CpuInstruction::AndAImm8 => {
+                self.phase = CpuPhase::FetchImm8(instruction);
+            }
+            CpuInstruction::AndAR8(register) => {
+                self.phase_and_a_r8(register);
+            }
+            CpuInstruction::OrAImm8 => {
+                self.phase = CpuPhase::FetchImm8(instruction);
+            }
+            CpuInstruction::OrAR8(register) => {
+                self.phase_or_a_r8(register);
+            }
+            CpuInstruction::XorAImm8 => {
+                self.phase = CpuPhase::FetchImm8(instruction);
+            }
+            CpuInstruction::XorAR8(register) => {
+                self.phase_xor_a_r8(register);
             }
             _ => {
                 panic!("No such instruction: {:?}", instruction);

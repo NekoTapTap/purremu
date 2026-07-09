@@ -322,3 +322,225 @@ fn test_ld_r16_imm16() {
         );
     }
 }
+
+#[test]
+fn test_and_a_r8() {
+    for register in CpuReg8::iter() {
+        let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
+        let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
+        let r_value = if register == CpuReg8::A {
+            // if register is A, use the same value as initial_a_value to test subtracting A from itself
+            initial_a_value
+        } else {
+            rand::random_range(u8::MIN..=u8::MAX) // Random value for testing
+        };
+        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::AndAR8(register)); // AND A, r
+
+        cpu.registers.set_r8(CpuReg8::A, initial_a_value);
+        cpu.registers.set_r8(register, r_value);
+        cpu.step_cycle(&bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchOpcode,
+            "test failed for AND A, {:?}",
+            register
+        );
+        assert_eq!(
+            cpu.registers.a,
+            initial_a_value & r_value,
+            "register: {:?}
+ initial_a_value: {:08b}
+ r_value:         {:08b}
+ result:          {:08b}",
+            register,
+            initial_a_value,
+            r_value,
+            cpu.registers.a
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+    }
+}
+
+#[test]
+fn test_or_a_r8() {
+    for register in CpuReg8::iter() {
+        let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
+        let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
+        let r_value = if register == CpuReg8::A {
+            // if register is A, use the same value as initial_a_value to test subtracting A from itself
+            initial_a_value
+        } else {
+            rand::random_range(u8::MIN..=u8::MAX) // Random value for testing
+        };
+        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::OrAR8(register)); // OR A, r
+
+        cpu.registers.set_r8(CpuReg8::A, initial_a_value);
+        cpu.registers.set_r8(register, r_value);
+        cpu.step_cycle(&bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchOpcode,
+            "test failed for OR A, {:?}",
+            register
+        );
+        assert_eq!(
+            cpu.registers.a,
+            initial_a_value | r_value,
+            "register: {:?}
+ initial_a_value: {:08b}
+ r_value:         {:08b}
+ result:          {:08b}",
+            register,
+            initial_a_value,
+            r_value,
+            cpu.registers.a
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+    }
+}
+
+#[test]
+fn test_xor_a_r8() {
+    for register in CpuReg8::iter() {
+        let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
+        let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
+        let r_value = if register == CpuReg8::A {
+            // if register is A, use the same value as initial_a_value to test subtracting A from itself
+            initial_a_value
+        } else {
+            rand::random_range(u8::MIN..=u8::MAX) // Random value for testing
+        };
+        bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::XorAR8(register)); // XOR A, r
+
+        cpu.registers.set_r8(CpuReg8::A, initial_a_value);
+        cpu.registers.set_r8(register, r_value);
+        cpu.step_cycle(&bus);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchOpcode,
+            "test failed for XOR A, {:?}",
+            register
+        );
+        assert_eq!(
+            cpu.registers.a,
+            initial_a_value ^ r_value,
+            "register: {:?}
+ initial_a_value: {:08b}
+ r_value:         {:08b}
+ result:          {:08b}",
+            register,
+            initial_a_value,
+            r_value,
+            cpu.registers.a
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+    }
+}
+
+#[test]
+fn test_and_a_imm8() {
+    let mut bus = MemoryBus::new();
+    let mut cpu = Cpu::new();
+
+    let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
+    let imm_value = rand::random_range(u8::MIN..=u8::MAX);
+    bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::AndAImm8); // AND A, imm8
+    bus.rom[0x0001] = imm_value;
+
+    cpu.registers.set_r8(CpuReg8::A, initial_a_value);
+    cpu.step_cycle(&bus);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchImm8(CpuInstruction::AndAImm8),
+        "test failed for AND A, imm8"
+    );
+    assert_eq!(cpu.registers.pc, 0x0001);
+
+    cpu.step_cycle(&bus);
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+    assert_eq!(
+        cpu.registers.a,
+        initial_a_value & imm_value,
+            "initial_a_value: {:08b}
+ r_value:         {:08b}
+ result:          {:08b}",
+        initial_a_value,
+        imm_value,
+        cpu.registers.a
+    );
+    assert_eq!(cpu.registers.pc, 0x0002);
+}
+
+#[test]
+fn test_or_a_imm8() {
+    let mut bus = MemoryBus::new();
+    let mut cpu = Cpu::new();
+
+    let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
+    let imm_value = rand::random_range(u8::MIN..=u8::MAX);
+    bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::OrAImm8); // OR A, imm8
+    bus.rom[0x0001] = imm_value;
+
+    cpu.registers.set_r8(CpuReg8::A, initial_a_value);
+    cpu.step_cycle(&bus);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchImm8(CpuInstruction::OrAImm8),
+        "test failed for OR A, imm8"
+    );
+    assert_eq!(cpu.registers.pc, 0x0001);
+
+    cpu.step_cycle(&bus);
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+    assert_eq!(
+        cpu.registers.a,
+        initial_a_value | imm_value,
+            "initial_a_value: {:08b}
+ r_value:         {:08b}
+ result:          {:08b}",
+        initial_a_value,
+        imm_value,
+        cpu.registers.a
+    );
+    assert_eq!(cpu.registers.pc, 0x0002);
+}
+
+#[test]
+fn test_xor_a_imm8() {
+    let mut bus = MemoryBus::new();
+    let mut cpu = Cpu::new();
+
+    let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
+    let imm_value = rand::random_range(u8::MIN..=u8::MAX);
+    bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::XorAImm8); // XOR A, imm8
+    bus.rom[0x0001] = imm_value;
+
+    cpu.registers.set_r8(CpuReg8::A, initial_a_value);
+    cpu.step_cycle(&bus);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchImm8(CpuInstruction::XorAImm8),
+        "test failed for XOR A, imm8"
+    );
+    assert_eq!(cpu.registers.pc, 0x0001);
+
+    cpu.step_cycle(&bus);
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+    assert_eq!(
+        cpu.registers.a,
+        initial_a_value ^ imm_value,
+            "initial_a_value: {:08b}
+ r_value:         {:08b}
+ result:          {:08b}",
+        initial_a_value,
+        imm_value,
+        cpu.registers.a
+    );
+    assert_eq!(cpu.registers.pc, 0x0002);
+}
