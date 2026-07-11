@@ -7,6 +7,12 @@ fn rand_external_ram_addr() -> u16 {
     rand::random_range(0xA000..=0xFDFF)
 }
 
+fn cpu_step_n(cpu: &mut Cpu, bus: &mut MemoryBus, n: usize) {
+    for _ in 0..n {
+        cpu.step(bus);
+    }
+}
+
 #[test]
 fn test_ld_r_imm8() {
     for register in CpuReg8::iter() {
@@ -19,7 +25,7 @@ fn test_ld_r_imm8() {
 
         assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
 
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchImm8(CpuInstruction::LdR8Imm8(register)),
@@ -28,7 +34,7 @@ fn test_ld_r_imm8() {
         );
         assert_eq!(cpu.registers.pc, 0x0001);
 
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         match register {
             CpuReg8::A => assert_eq!(cpu.registers.a, expected_register_value),
             CpuReg8::B => assert_eq!(cpu.registers.b, expected_register_value),
@@ -107,7 +113,7 @@ fn test_add_a_imm8() {
     bus.rom[0x0001] = imm_value;
     cpu.registers.set_r8(CpuReg8::A, initial_a_value);
 
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchImm8(CpuInstruction::AddAImm8),
@@ -115,7 +121,7 @@ fn test_add_a_imm8() {
     );
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(
         cpu.registers.a,
@@ -141,7 +147,7 @@ fn test_add_a_r() {
 
         cpu.registers.set_r8(CpuReg8::A, initial_a_value);
         cpu.registers.set_r8(register, r_value);
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -224,7 +230,7 @@ fn test_sub_a_imm8() {
     bus.rom[0x0001] = imm_value;
     cpu.registers.set_r8(CpuReg8::A, initial_a_value);
 
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchImm8(CpuInstruction::SubAImm8),
@@ -232,7 +238,7 @@ fn test_sub_a_imm8() {
     );
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(
         cpu.registers.a,
@@ -258,7 +264,7 @@ fn test_sub_a_r() {
 
         cpu.registers.set_r8(CpuReg8::A, initial_a_value);
         cpu.registers.set_r8(register, r_value);
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -292,7 +298,7 @@ fn test_ld_r16_imm16() {
 
         assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
 
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchImm16Low(CpuInstruction::LdR16Imm16(register)),
@@ -301,7 +307,7 @@ fn test_ld_r16_imm16() {
         );
         assert_eq!(cpu.registers.pc, 0x0001);
 
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchImm16High(CpuInstruction::LdR16Imm16(register)),
@@ -310,7 +316,7 @@ fn test_ld_r16_imm16() {
         );
         assert_eq!(cpu.registers.pc, 0x0002);
 
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -344,7 +350,7 @@ fn test_and_a_r8() {
 
         cpu.registers.set_r8(CpuReg8::A, initial_a_value);
         cpu.registers.set_r8(register, r_value);
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -384,7 +390,7 @@ fn test_or_a_r8() {
 
         cpu.registers.set_r8(CpuReg8::A, initial_a_value);
         cpu.registers.set_r8(register, r_value);
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -424,7 +430,7 @@ fn test_xor_a_r8() {
 
         cpu.registers.set_r8(CpuReg8::A, initial_a_value);
         cpu.registers.set_r8(register, r_value);
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -458,7 +464,7 @@ fn test_and_a_imm8() {
     bus.rom[0x0001] = imm_value;
 
     cpu.registers.set_r8(CpuReg8::A, initial_a_value);
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchImm8(CpuInstruction::AndAImm8),
@@ -466,7 +472,7 @@ fn test_and_a_imm8() {
     );
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(
         cpu.registers.a,
@@ -492,7 +498,7 @@ fn test_or_a_imm8() {
     bus.rom[0x0001] = imm_value;
 
     cpu.registers.set_r8(CpuReg8::A, initial_a_value);
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchImm8(CpuInstruction::OrAImm8),
@@ -500,7 +506,7 @@ fn test_or_a_imm8() {
     );
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(
         cpu.registers.a,
@@ -526,7 +532,7 @@ fn test_xor_a_imm8() {
     bus.rom[0x0001] = imm_value;
 
     cpu.registers.set_r8(CpuReg8::A, initial_a_value);
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchImm8(CpuInstruction::XorAImm8),
@@ -534,7 +540,7 @@ fn test_xor_a_imm8() {
     );
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(
         cpu.registers.a,
@@ -567,7 +573,7 @@ fn test_add_hl_r16() {
         cpu.registers.set_r16(CpuReg16::HL, dest_value);
         cpu.registers.set_r16(register, src_value);
 
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchR16(CpuInstruction::AddHlR16(register)),
@@ -581,7 +587,7 @@ fn test_add_hl_r16() {
             "don't touch the HL register yet, we need to simulate this 1 byte instruction taking 2 cycles"
         );
 
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -616,7 +622,7 @@ fn test_ld_a_r16mem() {
         bus.write8(r16_value, mem_value);
 
         cpu.registers.set_r16(r16, r16_value);
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchR16(CpuInstruction::LdAR16mem(r16)),
@@ -632,7 +638,7 @@ fn test_ld_a_r16mem() {
             A
         );
 
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -672,7 +678,7 @@ fn test_ld_hl_mem_r8() {
 
         cpu.registers.set_r16(CpuReg16::HL, hl_value);
         cpu.registers.set_r8(register, r_value);
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchR16(CpuInstruction::LdHlMemR8(register)),
@@ -686,7 +692,7 @@ fn test_ld_hl_mem_r8() {
             "don't touch the memory at HL yet, we need to simulate this 1 byte instruction taking 2 cycles"
         );
 
-        cpu.step_cycle(&mut bus);
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(
             cpu.phase,
             CpuPhase::FetchOpcode,
@@ -718,7 +724,7 @@ fn test_ld_hl_mem_imm8() {
     bus.rom[0x0001] = imm_value;
 
     cpu.registers.set_r16(CpuReg16::HL, hl_value);
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchR16(instruction),
@@ -726,7 +732,7 @@ fn test_ld_hl_mem_imm8() {
     );
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchImm8(instruction),
@@ -735,7 +741,7 @@ fn test_ld_hl_mem_imm8() {
     assert_eq!(bus.read8(hl_value), 0);
     assert_eq!(cpu.registers.pc, 0x0001);
 
-    cpu.step_cycle(&mut bus);
+    cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(
         cpu.phase,
         CpuPhase::FetchOpcode,

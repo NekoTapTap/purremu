@@ -32,6 +32,7 @@ pub enum CpuReg16 {
 
 #[rustfmt::skip]
 #[derive(PartialEq, Debug, Clone, Copy)]
+// TODO: use another model to represent instructions, because this model represents too much operations but SM83 don't have that many operations.
 pub enum CpuInstruction {
     LdR8Imm8(CpuReg8),
     LdR8R8(CpuReg8, CpuReg8),
@@ -316,7 +317,7 @@ impl CpuArithmetic for u16 {
 }
 
 pub struct Cpu {
-    divider: u8,
+    t_cycles_until_step: u8,
     phase: CpuPhase,
     registers: CpuRegisters,
     instruction_set: [[CpuInstruction; 16]; 16],
@@ -325,7 +326,7 @@ pub struct Cpu {
 impl Cpu {
     pub fn new() -> Self {
         Self {
-            divider: 0,
+            t_cycles_until_step: 0,
             phase: CpuPhase::FetchOpcode,
             registers: CpuRegisters::new(),
             instruction_set: Self::initialize_instruction_set(),
@@ -635,7 +636,14 @@ impl Cpu {
         }
     }
 
-    fn step_cycle(&mut self, bus: &mut MemoryBus) {
+    pub fn step(&mut self, bus: &mut MemoryBus) {
+        if self.t_cycles_until_step != 0 {
+            self.t_cycles_until_step -= 1;
+            return;
+        }
+
+        self.t_cycles_until_step = 4;
+
         match self.phase {
             CpuPhase::FetchOpcode => {
                 self.phase_fetch_opcode(bus);
