@@ -750,3 +750,94 @@ fn test_ld_hl_mem_imm8() {
     assert_eq!(bus.read8(hl_value), imm_value);
     assert_eq!(cpu.registers.pc, 0x0002);
 }
+
+#[test]
+fn test_jr_e8() {
+    // jump forward
+    {
+        let instruction = CpuInstruction::JrE8;
+        let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
+        bus.rom[0x0000] = cpu.encode_instruction(instruction); // JR e8
+        bus.rom[0x0001] = 2;
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchE8(instruction),
+            "test failed for JR e8"
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(cpu.phase, CpuPhase::FetchOpcode, "test failed for JR e8");
+        assert_eq!(cpu.registers.pc, 0x0004);
+    }
+    // jump backward
+    {
+        let instruction = CpuInstruction::JrE8;
+        let mut bus = MemoryBus::new();
+        let mut cpu = Cpu::new();
+
+        bus.rom[0x0000] = cpu.encode_instruction(instruction); // JR e8
+        bus.rom[0x0001] = (-2i8) as u8; // -2 in two's complement
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchE8(instruction),
+            "test failed for JR e8"
+        );
+        assert_eq!(cpu.registers.pc, 0x0001);
+
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(cpu.phase, CpuPhase::FetchOpcode, "test failed for JR e8");
+        assert_eq!(cpu.registers.pc, 0);
+    }
+}
+
+#[test]
+fn test_jr_cc_e8() {
+    let conditions = [
+        (CpuInstruction::JrNzE8, false),
+        (CpuInstruction::JrZE8, true),
+        (CpuInstruction::JrNcE8, false),
+        (CpuInstruction::JrCE8, true),
+    ];
+
+    for (instruction, flag_when_met) in conditions {
+        for condition_met in [true, false] {
+            let mut bus = MemoryBus::new();
+            let mut cpu = Cpu::new();
+            let flag = condition_met == flag_when_met;
+
+            match instruction {
+                CpuInstruction::JrNzE8 | CpuInstruction::JrZE8 => cpu.registers.f.zero = flag,
+                CpuInstruction::JrNcE8 | CpuInstruction::JrCE8 => {
+                    cpu.registers.f.carry = flag;
+                }
+                _ => unreachable!(),
+            }
+
+            bus.rom[0x0000] = cpu.encode_instruction(instruction);
+            bus.rom[0x0001] = 2;
+            cpu_step_n(&mut cpu, &mut bus, 4);
+            assert_eq!(
+                cpu.phase,
+                CpuPhase::FetchE8(instruction),
+                "test failed for {instruction:?}, condition_met={condition_met}"
+            );
+            assert_eq!(cpu.registers.pc, 0x0001);
+
+            cpu_step_n(&mut cpu, &mut bus, 4);
+            assert_eq!(
+                cpu.phase,
+                CpuPhase::FetchOpcode,
+                "test failed for {instruction:?}, condition_met={condition_met}"
+            );
+            assert_eq!(
+                cpu.registers.pc,
+                if condition_met { 0x0004 } else { 0x0002 }
+            );
+        }
+    }
+}
