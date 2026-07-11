@@ -26,13 +26,14 @@ impl Serial {
     }
 
     pub fn step(&mut self) -> Option<u8> {
-        if self.control & 0b0000_0001 == 0 {
+        if self.control & 0b1000_0000 == 0 {
             return None;
         }
 
         self.t_cycles += 1;
 
-        if self.t_cycles == 512 { // 128 M-cycles
+        if self.t_cycles == 512 {
+            // 128 M-cycles
             self.t_cycles = 0;
             self.bits_transferred += 1;
             self.transmitted = (self.transmitted << 1) | ((self.data & 0b1000_0000) >> 7);

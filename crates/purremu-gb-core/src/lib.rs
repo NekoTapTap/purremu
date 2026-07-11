@@ -1,5 +1,7 @@
 mod cpu;
-mod memory_bus;
 mod gameboy;
+mod memory_bus;
 mod ppu;
 mod serial;
+
+pub use gameboy::*;

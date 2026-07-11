@@ -11,6 +11,7 @@ pub enum CpuPhase {
     FetchImm16High(CpuInstruction),
     FetchR16(CpuInstruction),
     FetchE8(CpuInstruction),
+    ApplyJump(i8),
 }
 
 #[rustfmt::skip]
@@ -77,6 +78,8 @@ pub enum CpuInstruction {
     JrNcE8,
     JrCE8,
     JrE8,
+
+    Nop,
 }
 
 #[rustfmt::skip]
@@ -333,7 +336,7 @@ pub struct Cpu {
 impl Cpu {
     pub fn new() -> Self {
         Self {
-            t_cycles_until_step: 0,
+            t_cycles_until_step: 3,
             phase: CpuPhase::FetchOpcode,
             registers: CpuRegisters::new(),
             instruction_set: Self::initialize_instruction_set(),
@@ -347,7 +350,7 @@ impl Cpu {
         use CpuReg16::*;
 
         [
-            [NoImpl     , LdR16Imm16(BC), LdR16memA(BC), IncR16(B,C), IncR8(B)   , DecR8(B)   , LdR8Imm8(B), NoImpl     , NoImpl     , AddHlR16(BC), LdAR16mem(BC), DecR16(BC), IncR8(C)   , DecR8(C)   , LdR8Imm8(C), NoImpl     ],
+            [Nop     , LdR16Imm16(BC), LdR16memA(BC), IncR16(B,C), IncR8(B)   , DecR8(B)   , LdR8Imm8(B), NoImpl     , NoImpl     , AddHlR16(BC), LdAR16mem(BC), DecR16(BC), IncR8(C)   , DecR8(C)   , LdR8Imm8(C), NoImpl     ],
             [NoImpl     , LdR16Imm16(DE), LdR16memA(DE), IncR16(D,E), IncR8(D)   , DecR8(D)   , LdR8Imm8(D), NoImpl     , JrE8     , AddHlR16(DE), LdAR16mem(DE), DecR16(DE), IncR8(E)   , DecR8(E)   , LdR8Imm8(E), NoImpl     ],
             [JrNzE8     , LdR16Imm16(HL), LdR16memA(HL), IncR16(H,L), IncR8(H)   , DecR8(H)   , LdR8Imm8(H), NoImpl     , JrZE8     , AddHlR16(HL), LdAR16mem(HL), DecR16(HL), IncR8(L)   , DecR8(L)   , LdR8Imm8(L), NoImpl     ],
             [JrNcE8     , NoImpl       , NoImpl        , NoImpl     , NoImpl     , NoImpl     , LdHlMemImm8, NoImpl     , JrCE8     , NoImpl            , NoImpl        , NoImpl     , IncR8(A)   , DecR8(A)   , LdR8Imm8(A), NoImpl     ],
@@ -571,34 +574,27 @@ impl Cpu {
 
     fn fetch_e8(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
         let offset = self.fetch8(bus) as i8;
-        match instruction {
-            CpuInstruction::JrNzE8 => {
-                if !self.registers.f.zero {
-                    self.registers.pc = self.registers.pc.wrapping_add(offset as u16);
-                }
-            }
-            CpuInstruction::JrZE8 => {
-                if self.registers.f.zero {
-                    self.registers.pc = self.registers.pc.wrapping_add(offset as u16);
-                }
-            }
-            CpuInstruction::JrNcE8 => {
-                if !self.registers.f.carry {
-                    self.registers.pc = self.registers.pc.wrapping_add(offset as u16);
-                }
-            }
-            CpuInstruction::JrCE8 => {
-                if self.registers.f.carry {
-                    self.registers.pc = self.registers.pc.wrapping_add(offset as u16);
-                }
-            }
-            CpuInstruction::JrE8 => {
-                self.registers.pc = self.registers.pc.wrapping_add(offset as u16);
-            }
+        let should_jump = match instruction {
+            CpuInstruction::JrNzE8 => !self.registers.f.zero,
+            CpuInstruction::JrZE8 => self.registers.f.zero,
+            CpuInstruction::JrNcE8 => !self.registers.f.carry,
+            CpuInstruction::JrCE8 => self.registers.f.carry,
+            CpuInstruction::JrE8 => true,
             _ => {
                 panic!("No such instruction: {:?}", instruction);
             }
+        };
+
+        if !should_jump {
+            self.phase = CpuPhase::FetchOpcode;
+            return;
         }
+
+        self.phase = CpuPhase::ApplyJump(offset);
+    }
+
+    fn apply_jump(&mut self, offset: i8) {
+        self.registers.pc = self.registers.pc.wrapping_add(offset as u16);
         self.phase = CpuPhase::FetchOpcode;
     }
 
@@ -670,8 +666,15 @@ impl Cpu {
             CpuInstruction::LdHlMemImm8 => {
                 self.phase = CpuPhase::FetchR16(instruction);
             }
-            CpuInstruction::JrNzE8 | CpuInstruction::JrZE8 | CpuInstruction::JrNcE8 | CpuInstruction::JrCE8 | CpuInstruction::JrE8 => {
+            CpuInstruction::JrNzE8
+            | CpuInstruction::JrZE8
+            | CpuInstruction::JrNcE8
+            | CpuInstruction::JrCE8
+            | CpuInstruction::JrE8 => {
                 self.phase = CpuPhase::FetchE8(instruction);
+            }
+            CpuInstruction::Nop => {
+                self.phase = CpuPhase::FetchOpcode;
             }
             _ => {
                 panic!("No such instruction: {:?}", instruction);
@@ -685,7 +688,7 @@ impl Cpu {
             return;
         }
 
-        self.t_cycles_until_step = 4;
+        self.t_cycles_until_step = 3;
 
         match self.phase {
             CpuPhase::FetchOpcode => {
@@ -705,6 +708,9 @@ impl Cpu {
             }
             CpuPhase::FetchE8(instruction) => {
                 self.fetch_e8(instruction, bus);
+            }
+            CpuPhase::ApplyJump(offset) => {
+                self.apply_jump(offset);
             }
         }
     }

@@ -14,9 +14,27 @@ fn cpu_step_n(cpu: &mut Cpu, bus: &mut MemoryBus, n: usize) {
 }
 
 #[test]
+fn test_cpu_advances_one_m_cycle_every_four_t_cycles() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+
+    cpu_step_n(&mut cpu, &mut bus, 3);
+    assert_eq!(cpu.registers.pc, 0);
+
+    cpu_step_n(&mut cpu, &mut bus, 1);
+    assert_eq!(cpu.registers.pc, 1);
+
+    cpu_step_n(&mut cpu, &mut bus, 3);
+    assert_eq!(cpu.registers.pc, 1);
+
+    cpu_step_n(&mut cpu, &mut bus, 1);
+    assert_eq!(cpu.registers.pc, 2);
+}
+
+#[test]
 fn test_ld_r_imm8() {
     for register in CpuReg8::iter() {
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         let expected_register_value = rand::random_range(u8::MIN..=u8::MAX); // Random value for testing
@@ -104,7 +122,7 @@ fn test_cpu_add() {
 
 #[test]
 fn test_add_a_imm8() {
-    let mut bus = MemoryBus::new();
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
     let mut cpu = Cpu::new();
 
     let initial_a_value = 0x10;
@@ -133,7 +151,7 @@ fn test_add_a_imm8() {
 #[test]
 fn test_add_a_r() {
     for register in CpuReg8::iter() {
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
@@ -222,7 +240,7 @@ fn test_cpu_sub() {
 
 #[test]
 fn test_sub_a_imm8() {
-    let mut bus = MemoryBus::new();
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
     let mut cpu = Cpu::new();
     let initial_a_value = 0x10;
     let imm_value = 0x20;
@@ -250,7 +268,7 @@ fn test_sub_a_imm8() {
 #[test]
 fn test_sub_a_r() {
     for register in CpuReg8::iter() {
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
@@ -287,7 +305,7 @@ fn test_sub_a_r() {
 #[test]
 fn test_ld_r16_imm16() {
     for register in CpuReg16::iter() {
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         let low_byte = rand::random_range(u8::MIN..=u8::MAX);
@@ -336,7 +354,7 @@ fn test_ld_r16_imm16() {
 #[test]
 fn test_and_a_r8() {
     for register in CpuReg8::iter() {
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
@@ -376,7 +394,7 @@ fn test_and_a_r8() {
 #[test]
 fn test_or_a_r8() {
     for register in CpuReg8::iter() {
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
@@ -416,7 +434,7 @@ fn test_or_a_r8() {
 #[test]
 fn test_xor_a_r8() {
     for register in CpuReg8::iter() {
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
@@ -455,7 +473,7 @@ fn test_xor_a_r8() {
 
 #[test]
 fn test_and_a_imm8() {
-    let mut bus = MemoryBus::new();
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
     let mut cpu = Cpu::new();
 
     let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
@@ -489,7 +507,7 @@ fn test_and_a_imm8() {
 
 #[test]
 fn test_or_a_imm8() {
-    let mut bus = MemoryBus::new();
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
     let mut cpu = Cpu::new();
 
     let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
@@ -523,7 +541,7 @@ fn test_or_a_imm8() {
 
 #[test]
 fn test_xor_a_imm8() {
-    let mut bus = MemoryBus::new();
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
     let mut cpu = Cpu::new();
 
     let initial_a_value = rand::random_range(u8::MIN..=u8::MAX);
@@ -558,7 +576,7 @@ fn test_xor_a_imm8() {
 #[test]
 fn test_add_hl_r16() {
     for register in CpuReg16::iter() {
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         let src_value = rand::random_range(u16::MIN..=u16::MAX);
@@ -613,7 +631,7 @@ fn test_ld_a_r16mem() {
     use CpuReg8::A;
 
     for r16 in CpuReg16::iter() {
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         let r16_value = rand_external_ram_addr(); // Random value in the range of external RAM
@@ -663,7 +681,7 @@ fn test_ld_a_r16mem() {
 #[test]
 fn test_ld_hl_mem_r8() {
     for register in CpuReg8::iter() {
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         let hl_value = rand_external_ram_addr(); // Random value in the range of external RAM
@@ -715,7 +733,7 @@ fn test_ld_hl_mem_r8() {
 #[test]
 fn test_ld_hl_mem_imm8() {
     let instruction = CpuInstruction::LdHlMemImm8;
-    let mut bus = MemoryBus::new();
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
     let mut cpu = Cpu::new();
 
     let hl_value = rand_external_ram_addr(); // Random value in the range of external RAM
@@ -756,7 +774,7 @@ fn test_jr_e8() {
     // jump forward
     {
         let instruction = CpuInstruction::JrE8;
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         bus.rom[0x0000] = cpu.encode_instruction(instruction); // JR e8
@@ -770,13 +788,17 @@ fn test_jr_e8() {
         assert_eq!(cpu.registers.pc, 0x0001);
 
         cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_ne!(cpu.phase, CpuPhase::FetchOpcode, "test failed for JR e8");
+        assert_eq!(cpu.registers.pc, 0x0002);
+
+        cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(cpu.phase, CpuPhase::FetchOpcode, "test failed for JR e8");
         assert_eq!(cpu.registers.pc, 0x0004);
     }
     // jump backward
     {
         let instruction = CpuInstruction::JrE8;
-        let mut bus = MemoryBus::new();
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
         let mut cpu = Cpu::new();
 
         bus.rom[0x0000] = cpu.encode_instruction(instruction); // JR e8
@@ -788,6 +810,10 @@ fn test_jr_e8() {
             "test failed for JR e8"
         );
         assert_eq!(cpu.registers.pc, 0x0001);
+
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_ne!(cpu.phase, CpuPhase::FetchOpcode, "test failed for JR e8");
+        assert_eq!(cpu.registers.pc, 0x0002);
 
         cpu_step_n(&mut cpu, &mut bus, 4);
         assert_eq!(cpu.phase, CpuPhase::FetchOpcode, "test failed for JR e8");
@@ -806,7 +832,7 @@ fn test_jr_cc_e8() {
 
     for (instruction, flag_when_met) in conditions {
         for condition_met in [true, false] {
-            let mut bus = MemoryBus::new();
+            let mut bus = MemoryBus::new(vec![0; 0x8000]);
             let mut cpu = Cpu::new();
             let flag = condition_met == flag_when_met;
 
@@ -829,14 +855,22 @@ fn test_jr_cc_e8() {
             assert_eq!(cpu.registers.pc, 0x0001);
 
             cpu_step_n(&mut cpu, &mut bus, 4);
+            assert_eq!(cpu.registers.pc, 0x0002);
+
+            if condition_met {
+                assert_ne!(
+                    cpu.phase,
+                    CpuPhase::FetchOpcode,
+                    "test failed for {instruction:?}, condition_met={condition_met}"
+                );
+                cpu_step_n(&mut cpu, &mut bus, 4);
+                assert_eq!(cpu.registers.pc, 0x0004);
+            }
+
             assert_eq!(
                 cpu.phase,
                 CpuPhase::FetchOpcode,
                 "test failed for {instruction:?}, condition_met={condition_met}"
-            );
-            assert_eq!(
-                cpu.registers.pc,
-                if condition_met { 0x0004 } else { 0x0002 }
             );
         }
     }
