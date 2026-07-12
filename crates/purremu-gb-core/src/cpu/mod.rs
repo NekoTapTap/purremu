@@ -68,7 +68,6 @@ impl Cpu {
         self.instruction_set[row][col]
     }
 
-    #[cfg(test)]
     fn encode_instruction(&self, instruction: CpuInstruction) -> u8 {
         let row = self
             .instruction_set
@@ -444,7 +443,7 @@ impl Cpu {
                 self.phase = CpuPhase::FetchOpcode;
             }
             _ => {
-                panic!("No such instruction: {:?}", instruction);
+                panic!("No such instruction: {:?} ({:02X})", instruction, self.encode_instruction(instruction));
             }
         }
     }
