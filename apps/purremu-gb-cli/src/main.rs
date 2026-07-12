@@ -9,7 +9,7 @@ fn main() {
     // read the ROM file into a Vec<u8>
     let rom_data = fs::read(rom_path).expect("Failed to read the ROM file.");
 
-    let mut gameboy = GameBoy::new(rom_data);
+    let mut gameboy = GameBoy::new_post_boot(rom_data);
 
     loop {
         let events = gameboy.step();

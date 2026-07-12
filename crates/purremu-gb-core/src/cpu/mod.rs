@@ -39,6 +39,26 @@ impl Cpu {
         }
     }
 
+    // https://gbdev.io/pandocs/Power_Up_Sequence.html#console-state-after-boot-rom-hand-off
+    pub fn new_post_boot() -> Self {
+        let mut cpu = Self::new();
+        cpu.registers.pc = 0x100;
+        cpu.registers.sp = 0xFFFE;
+        cpu.registers.a = 0x01;
+        cpu.registers.f.zero = false;
+        cpu.registers.f.subtract = false;
+        cpu.registers.f.half_carry = true;
+        cpu.registers.f.carry = true;
+        cpu.registers.b = 0x00;
+        cpu.registers.c = 0x13;
+        cpu.registers.d = 0x00;
+        cpu.registers.e = 0xD8;
+        cpu.registers.h = 0x01;
+        cpu.registers.l = 0x4D;
+
+        cpu
+    }
+
     fn decode_instruction(&self, opcode: u8) -> CpuInstruction {
         let row = (opcode >> 4) as usize;
         let col = (opcode & 0x0F) as usize;

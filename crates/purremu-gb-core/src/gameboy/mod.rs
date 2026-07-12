@@ -24,6 +24,14 @@ impl GameBoy {
         }
     }
 
+    pub fn new_post_boot(rom_data: Vec<u8>) -> Self {
+        Self {
+            cpu: Cpu::new_post_boot(),
+            memory_bus: MemoryBus::new(rom_data),
+            ppu: Ppu::new(),
+        }
+    }
+
     pub fn step(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
 
