@@ -875,3 +875,117 @@ fn test_jr_cc_e8() {
         }
     }
 }
+
+#[test]
+fn test_jp_a16() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+    bus.rom[0x0000] = cpu.encode_instruction(CpuInstruction::JpA16);
+    bus.rom[0x0001] = 0x34;
+    bus.rom[0x0002] = 0x12;
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x0001);
+    assert_eq!(cpu.phase, CpuPhase::FetchA16Low(CpuInstruction::JpA16));
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x0002);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchA16High(CpuInstruction::JpA16, 0x34),
+    );
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x0003);
+    assert_eq!(cpu.phase, CpuPhase::ApplyAbsoluteJump(0x1234));
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x1234);
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+}
+
+#[test]
+fn test_jp_cc_a16() {
+    let conditions = [
+        (CpuInstruction::JpNzA16, false),
+        (CpuInstruction::JpZA16, true),
+        (CpuInstruction::JpNcA16, false),
+        (CpuInstruction::JpCA16, true),
+    ];
+
+    for (instruction, flag_when_met) in conditions {
+        for condition_met in [true, false] {
+            let mut bus = MemoryBus::new(vec![0; 0x8000]);
+            let mut cpu = Cpu::new();
+            let flag = condition_met == flag_when_met;
+
+            match instruction {
+                CpuInstruction::JpNzA16 | CpuInstruction::JpZA16 => cpu.registers.f.zero = flag,
+                CpuInstruction::JpNcA16 | CpuInstruction::JpCA16 => {
+                    cpu.registers.f.carry = flag;
+                }
+                _ => unreachable!(),
+            }
+
+            bus.rom[0x0000] = cpu.encode_instruction(instruction);
+            bus.rom[0x0001] = 0x34;
+            bus.rom[0x0002] = 0x12;
+
+            cpu_step_n(&mut cpu, &mut bus, 4);
+            assert_eq!(
+                cpu.phase,
+                CpuPhase::FetchA16Low(instruction),
+                "test failed for {instruction:?}, condition_met={condition_met}"
+            );
+            assert_eq!(cpu.registers.pc, 0x0001);
+
+            cpu_step_n(&mut cpu, &mut bus, 4);
+            assert_eq!(cpu.registers.pc, 0x0002);
+            assert_eq!(
+                cpu.phase,
+                CpuPhase::FetchA16High(instruction, 0x34),
+                "test failed for {instruction:?}, condition_met={condition_met}"
+            );
+
+            if condition_met {
+                cpu_step_n(&mut cpu, &mut bus, 4);
+                assert_eq!(cpu.registers.pc, 0x0003);
+                assert_eq!(
+                    cpu.phase,
+                    CpuPhase::ApplyAbsoluteJump(0x1234),
+                    "test failed for {instruction:?}, condition_met={condition_met}"
+                );
+                cpu_step_n(&mut cpu, &mut bus, 4);
+                assert_eq!(cpu.registers.pc, 0x1234);
+                assert_eq!(
+                    cpu.phase,
+                    CpuPhase::FetchOpcode,
+                    "test failed for {instruction:?}, condition_met={condition_met}"
+                );
+
+                continue;
+            }
+
+            cpu_step_n(&mut cpu, &mut bus, 4);
+            assert_eq!(cpu.registers.pc, 0x0003);
+            assert_eq!(
+                cpu.phase,
+                CpuPhase::FetchOpcode,
+                "test failed for {instruction:?}, condition_met={condition_met}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_jp_hl() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+    let hl_value = 0xC000;
+    cpu.registers.set_r16(CpuReg16::HL, hl_value);
+    bus.rom[0x0000] = 0xE9;
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, hl_value);
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+}

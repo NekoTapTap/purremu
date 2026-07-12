@@ -48,6 +48,13 @@ pub(crate) enum CpuInstruction {
     JrCE8,
     JrE8,
 
+    JpNzA16,
+    JpZA16,
+    JpNcA16,
+    JpCA16,
+    JpA16,
+    JpHl,
+
     Nop,
 }
 
@@ -74,9 +81,9 @@ impl Cpu {
             [AndAR8(B)  , AndAR8(C)    , AndAR8(D)     , AndAR8(E)  , AndAR8(H)  , AndAR8(L)  , NoImpl   , AndAR8(A)  , XorAR8(B)  , XorAR8(C)         , XorAR8(D)     , XorAR8(E)  , XorAR8(H)  , XorAR8(L)  , NoImpl   , XorAR8(A)  ],
             [OrAR8(B)   , OrAR8(C)     , OrAR8(D)      , OrAR8(E)   , OrAR8(H)   , OrAR8(L)   , NoImpl   , OrAR8(A)   , CpAR8(B)   , CpAR8(C)          , CpAR8(D)      , CpAR8(E)   , CpAR8(H)   , CpAR8(L)   , NoImpl   , CpAR8(A)   ],
 
-            [NoImpl     , NoImpl       , NoImpl        , NoImpl     , NoImpl     , NoImpl     , AddAImm8   , NoImpl     , NoImpl     , NoImpl            , NoImpl        , NoImpl     , NoImpl     , NoImpl     , AdcAImm8   , NoImpl     ],
-            [NoImpl     , NoImpl       , NoImpl        , Illegal    , NoImpl     , NoImpl     , SubAImm8   , NoImpl     , NoImpl     , NoImpl            , NoImpl        , Illegal    , NoImpl     , Illegal    , SbcAImm8   , NoImpl     ],
-            [NoImpl     , NoImpl       , NoImpl        , Illegal    , Illegal    , NoImpl     , AndAImm8   , NoImpl     , NoImpl     , NoImpl            , NoImpl        , Illegal    , Illegal    , Illegal    , XorAImm8   , NoImpl     ],
+            [NoImpl     , NoImpl       , JpNzA16       , JpA16     , NoImpl     , NoImpl     , AddAImm8   , NoImpl     , NoImpl     , NoImpl            , JpZA16        , NoImpl     , NoImpl     , NoImpl     , AdcAImm8   , NoImpl     ],
+            [NoImpl     , NoImpl       , JpNcA16       , Illegal    , NoImpl     , NoImpl     , SubAImm8   , NoImpl     , NoImpl     , NoImpl            , JpCA16        , Illegal    , NoImpl     , Illegal    , SbcAImm8   , NoImpl     ],
+            [NoImpl     , NoImpl       , NoImpl        , Illegal    , Illegal    , NoImpl     , AndAImm8   , NoImpl     , NoImpl     , JpHl            , NoImpl        , Illegal    , Illegal    , Illegal    , XorAImm8   , NoImpl     ],
             [NoImpl     , NoImpl       , NoImpl        , NoImpl     , Illegal    , NoImpl     , OrAImm8    , NoImpl     , NoImpl     , NoImpl            , NoImpl        , NoImpl     , Illegal    , Illegal    , CpAImm8    , NoImpl     ],
         ]
     }

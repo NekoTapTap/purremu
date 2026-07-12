@@ -19,7 +19,10 @@ pub enum CpuPhase {
     FetchImm16High(CpuInstruction),
     FetchR16(CpuInstruction),
     FetchE8(CpuInstruction),
-    ApplyJump(i8),
+    FetchA16Low(CpuInstruction),
+    FetchA16High(CpuInstruction, u8),
+    ApplyRelativeJump(i8),
+    ApplyAbsoluteJump(u16),
 }
 
 pub struct Cpu {
@@ -45,7 +48,7 @@ impl Cpu {
         cpu.registers.pc = 0x100;
         cpu.registers.sp = 0xFFFE;
         cpu.registers.a = 0x01;
-        cpu.registers.f.zero = false;
+        cpu.registers.f.zero = true;
         cpu.registers.f.subtract = false;
         cpu.registers.f.half_carry = true;
         cpu.registers.f.carry = true;
@@ -278,11 +281,75 @@ impl Cpu {
             return;
         }
 
-        self.phase = CpuPhase::ApplyJump(offset);
+        self.phase = CpuPhase::ApplyRelativeJump(offset);
     }
 
-    fn apply_jump(&mut self, offset: i8) {
+    fn fetch_a16_low(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
+        let low_byte = self.fetch8(bus);
+
+        match instruction {
+            CpuInstruction::JpNzA16
+            | CpuInstruction::JpZA16
+            | CpuInstruction::JpNcA16
+            | CpuInstruction::JpCA16
+            | CpuInstruction::JpA16 => {
+                self.phase = CpuPhase::FetchA16High(instruction, low_byte);
+            }
+            _ => {
+                panic!("No such instruction: {:?}", instruction);
+            }
+        }
+    }
+
+    fn fetch_a16_high(&mut self, instruction: CpuInstruction, low_byte: u8, bus: &MemoryBus) {
+        let high_byte = self.fetch8(bus);
+        let addr = ((high_byte as u16) << 8) | (low_byte as u16);
+
+        match instruction {
+            CpuInstruction::JpNzA16 => {
+                if !self.registers.f.zero {
+                    self.phase = CpuPhase::ApplyAbsoluteJump(addr);
+                    return
+                }
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::JpZA16 => {
+                if self.registers.f.zero {
+                    self.phase = CpuPhase::ApplyAbsoluteJump(addr);
+                    return;
+                }
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::JpNcA16 => {
+                if !self.registers.f.carry {
+                    self.phase = CpuPhase::ApplyAbsoluteJump(addr);
+                    return
+                }
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::JpCA16 => {
+                if self.registers.f.carry {
+                    self.phase = CpuPhase::ApplyAbsoluteJump(addr);
+                    return
+                }
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::JpA16 => {
+                self.phase = CpuPhase::ApplyAbsoluteJump(addr);
+            }
+            _ => {
+                panic!("No such instruction: {:?}", instruction);
+            }
+        }
+    }
+
+    fn apply_relative_jump(&mut self, offset: i8) {
         self.registers.pc = self.registers.pc.wrapping_add(offset as u16);
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    fn apply_absolute_jump(&mut self, addr: u16) {
+        self.registers.pc = addr;
         self.phase = CpuPhase::FetchOpcode;
     }
 
@@ -361,6 +428,18 @@ impl Cpu {
             | CpuInstruction::JrE8 => {
                 self.phase = CpuPhase::FetchE8(instruction);
             }
+            CpuInstruction::JpNzA16
+            | CpuInstruction::JpZA16
+            | CpuInstruction::JpNcA16
+            | CpuInstruction::JpCA16
+            | CpuInstruction::JpA16 => {
+                self.phase = CpuPhase::FetchA16Low(instruction);
+            }
+            CpuInstruction::JpHl => {
+                let hl_value = self.registers.get_r16(CpuReg16::HL);
+                self.registers.pc = hl_value;
+                self.phase = CpuPhase::FetchOpcode;
+            }
             CpuInstruction::Nop => {
                 self.phase = CpuPhase::FetchOpcode;
             }
@@ -397,8 +476,17 @@ impl Cpu {
             CpuPhase::FetchE8(instruction) => {
                 self.fetch_e8(instruction, bus);
             }
-            CpuPhase::ApplyJump(offset) => {
-                self.apply_jump(offset);
+            CpuPhase::FetchA16Low(instruction) => {
+                self.fetch_a16_low(instruction, bus);
+            }
+            CpuPhase::FetchA16High(instruction, low_byte) => {
+                self.fetch_a16_high(instruction, low_byte, bus);
+            }
+            CpuPhase::ApplyRelativeJump(offset) => {
+                self.apply_relative_jump(offset);
+            }
+            CpuPhase::ApplyAbsoluteJump(addr) => {
+                self.apply_absolute_jump(addr);
             }
         }
     }
