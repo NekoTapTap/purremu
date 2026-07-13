@@ -34,6 +34,7 @@ pub struct Cpu {
     phase: CpuPhase,
     registers: CpuRegisters,
     instruction_set: [[CpuInstruction; 16]; 16],
+    ime: bool, // Interrupt Master Enable flag
 }
 
 impl Cpu {
@@ -43,6 +44,7 @@ impl Cpu {
             phase: CpuPhase::FetchOpcode,
             registers: CpuRegisters::new(),
             instruction_set: Self::initialize_instruction_set(),
+            ime: false,
         }
     }
 
@@ -465,6 +467,14 @@ impl Cpu {
                 self.phase = CpuPhase::FetchOpcode;
             }
             CpuInstruction::Nop => {
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::DI => {
+                self.ime = false;
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::EI => {
+                self.ime = true;
                 self.phase = CpuPhase::FetchOpcode;
             }
             _ => {

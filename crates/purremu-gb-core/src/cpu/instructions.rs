@@ -1,7 +1,6 @@
-use crate::cpu::{Cpu};
+use crate::cpu::Cpu;
 use crate::cpu::registers::{CpuReg8, CpuReg16};
 
-#[rustfmt::skip]
 #[derive(PartialEq, Debug, Clone, Copy)]
 // TODO: use another model to represent instructions, because this model represents too much operations but SM83 don't have that many operations.
 pub(crate) enum CpuInstruction {
@@ -61,6 +60,9 @@ pub(crate) enum CpuInstruction {
     CallNcA16,
     CallCA16,
 
+    DI,
+    EI,
+
     Nop,
 }
 
@@ -90,7 +92,7 @@ impl Cpu {
             [NoImpl     , NoImpl       , JpNzA16       , JpA16      , CallNzA16  , NoImpl     , AddAImm8   , NoImpl     , NoImpl     , NoImpl          , JpZA16        , NoImpl     , CallZA16   , CallA16    , AdcAImm8   , NoImpl     ],
             [NoImpl     , NoImpl       , JpNcA16       , Illegal    , CallNcA16  , NoImpl     , SubAImm8   , NoImpl     , NoImpl     , NoImpl          , JpCA16        , Illegal    , CallCA16   , Illegal    , SbcAImm8   , NoImpl     ],
             [NoImpl     , NoImpl       , NoImpl        , Illegal    , Illegal    , NoImpl     , AndAImm8   , NoImpl     , NoImpl     , JpHl            , NoImpl        , Illegal    , Illegal    , Illegal    , XorAImm8   , NoImpl     ],
-            [NoImpl     , NoImpl       , NoImpl        , NoImpl     , Illegal    , NoImpl     , OrAImm8    , NoImpl     , NoImpl     , NoImpl          , NoImpl        , NoImpl     , Illegal    , Illegal    , CpAImm8    , NoImpl     ],
+            [NoImpl     , NoImpl       , NoImpl        , DI         , Illegal    , NoImpl     , OrAImm8    , NoImpl     , NoImpl     , NoImpl          , NoImpl        , EI         , Illegal    , Illegal    , CpAImm8    , NoImpl     ],
         ]
     }
 }
