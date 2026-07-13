@@ -25,12 +25,19 @@ pub enum CpuPhase {
     ApplyAbsoluteJump(u16),
     ApplyAbsoluteJumpEnableInterrupts(u16),
 
-    DecrementSp(CpuInstruction, u16),
-    SetSpHigh(CpuInstruction, u16),
-    SetSpLow(CpuInstruction, u16),
+    DecrementSpForWrite(CpuInstruction, u16),
+    DecrementSp(CpuReg16),
+    WriteSpMemHigh(CpuInstruction, u16),
+    WriteSpMemLow(CpuInstruction, u16),
 
     ReadSpHigh(CpuInstruction, u8),
     ReadSpLow(CpuInstruction),
+
+    PushR16Low(CpuReg16),
+    PushR16High(CpuReg16),
+
+    PopR16Low(CpuReg16),
+    PopR16High(CpuReg16),
 
     DecrementR16(CpuReg16),
     IncrementR16(CpuReg16),
@@ -366,32 +373,32 @@ impl Cpu {
                 self.phase = CpuPhase::ApplyAbsoluteJump(addr);
             }
             CpuInstruction::CallA16 => {
-                self.phase = CpuPhase::DecrementSp(instruction, addr);
+                self.phase = CpuPhase::DecrementSpForWrite(instruction, addr);
             }
             CpuInstruction::CallNzA16 => {
                 if !self.registers.f.zero {
-                    self.phase = CpuPhase::DecrementSp(instruction, addr);
+                    self.phase = CpuPhase::DecrementSpForWrite(instruction, addr);
                     return;
                 }
                 self.phase = CpuPhase::FetchOpcode;
             }
             CpuInstruction::CallZA16 => {
                 if self.registers.f.zero {
-                    self.phase = CpuPhase::DecrementSp(instruction, addr);
+                    self.phase = CpuPhase::DecrementSpForWrite(instruction, addr);
                     return;
                 }
                 self.phase = CpuPhase::FetchOpcode;
             }
             CpuInstruction::CallNcA16 => {
                 if !self.registers.f.carry {
-                    self.phase = CpuPhase::DecrementSp(instruction, addr);
+                    self.phase = CpuPhase::DecrementSpForWrite(instruction, addr);
                     return;
                 }
                 self.phase = CpuPhase::FetchOpcode;
             }
             CpuInstruction::CallCA16 => {
                 if self.registers.f.carry {
-                    self.phase = CpuPhase::DecrementSp(instruction, addr);
+                    self.phase = CpuPhase::DecrementSpForWrite(instruction, addr);
                     return;
                 }
                 self.phase = CpuPhase::FetchOpcode;
@@ -539,6 +546,12 @@ impl Cpu {
             CpuInstruction::IncR8(r8) => {
                 self.increment_r8(r8);
             }
+            CpuInstruction::PushR16(r16) => {
+                self.phase = CpuPhase::DecrementSp(r16);
+            }
+            CpuInstruction::PopR16(r16) => {
+                self.phase = CpuPhase::PopR16Low(r16);
+            }
             _ => {
                 panic!(
                     "No such instruction: {:?} (0X{:02X})",
@@ -549,9 +562,14 @@ impl Cpu {
         }
     }
 
-    fn decrement_sp(&mut self, instruction: CpuInstruction, addr: u16) {
+    fn decrement_sp_for_write(&mut self, instruction: CpuInstruction, addr: u16) {
         self.registers.sp -= 1;
-        self.phase = CpuPhase::SetSpHigh(instruction, addr);
+        self.phase = CpuPhase::WriteSpMemHigh(instruction, addr);
+    }
+
+    fn decrement_sp(&mut self, register: CpuReg16) {
+        self.registers.sp -= 1;
+        self.phase = CpuPhase::PushR16High(register);
     }
 
     fn decrement_r8(&mut self, register: CpuReg8) {
@@ -598,7 +616,7 @@ impl Cpu {
                 let high_byte = (self.registers.pc >> 8) as u8;
                 bus.write8(self.registers.sp, high_byte);
                 self.registers.sp -= 1;
-                self.phase = CpuPhase::SetSpLow(instruction, addr);
+                self.phase = CpuPhase::WriteSpMemLow(instruction, addr);
             }
             _ => {
                 panic!("No such instruction: {:?}", instruction);
@@ -653,6 +671,34 @@ impl Cpu {
         }
     }
 
+    fn push_r16_high(&mut self, register: CpuReg16, bus: &mut MemoryBus) {
+        let value = self.registers.get_r16(register);
+        bus.write8(self.registers.sp, (value >> 8) as u8);
+        self.registers.sp -= 1;
+        self.phase = CpuPhase::PushR16Low(register);
+    }
+
+    fn push_r16_low(&mut self, register: CpuReg16, bus: &mut MemoryBus) {
+        let value = self.registers.get_r16(register);
+        bus.write8(self.registers.sp, value as u8);
+        self.registers.sp -= 1;
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    fn pop_r16_low(&mut self, register: CpuReg16, bus: &mut MemoryBus) {
+        let low_byte = self.read8(bus, self.registers.sp);
+        self.registers.sp += 1;
+        self.registers.set_r16_low(register, low_byte);
+        self.phase = CpuPhase::PopR16High(register);
+    }
+
+    fn pop_r16_high(&mut self, register: CpuReg16, bus: &mut MemoryBus) {
+        let high_byte = self.read8(bus, self.registers.sp);
+        self.registers.sp += 1;
+        self.registers.set_r16_high(register, high_byte);
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
     pub fn step(&mut self, bus: &mut MemoryBus) {
         if self.t_cycles_until_step != 0 {
             self.t_cycles_until_step -= 1;
@@ -672,13 +718,13 @@ impl Cpu {
             CpuPhase::FetchA16High(instruction, low_byte) => {
                 self.fetch_a16_high(instruction, low_byte, bus)
             }
-            CpuPhase::DecrementSp(instruction, addr) => self.decrement_sp(instruction, addr),
+            CpuPhase::DecrementSpForWrite(instruction, addr) => self.decrement_sp_for_write(instruction, addr),
             CpuPhase::IncrementR16(register) => self.increment_r16(register),
             CpuPhase::DecrementR16(register) => self.decrement_r16(register),
-            CpuPhase::SetSpHigh(instruction, addr) => self.set_sp_high(instruction, addr, bus),
-            CpuPhase::SetSpLow(instruction, addr) => self.set_sp_low(instruction, addr, bus),
-            CpuPhase::ReadSpHigh(instruction, high_byte) => {
-                self.read_sp_high(instruction, high_byte, bus)
+            CpuPhase::WriteSpMemHigh(instruction, addr) => self.set_sp_high(instruction, addr, bus),
+            CpuPhase::WriteSpMemLow(instruction, addr) => self.set_sp_low(instruction, addr, bus),
+            CpuPhase::ReadSpHigh(instruction, low_byte) => {
+                self.read_sp_high(instruction, low_byte, bus)
             }
             CpuPhase::CheckRetCondition(condition) => self.check_return_condition(condition),
             CpuPhase::ReadSpLow(instruction) => self.read_sp_low(instruction, bus),
@@ -688,6 +734,11 @@ impl Cpu {
                 self.apply_absolute_jump(addr);
                 self.ime = true;
             }
+            CpuPhase::PushR16High(register) => self.push_r16_high(register, bus),
+            CpuPhase::PushR16Low(register) => self.push_r16_low(register, bus),
+            CpuPhase::DecrementSp(register) => self.decrement_sp(register),
+            CpuPhase::PopR16Low(register) => self.pop_r16_low(register, bus),
+            CpuPhase::PopR16High(register) => self.pop_r16_high(register, bus),
         }
     }
 

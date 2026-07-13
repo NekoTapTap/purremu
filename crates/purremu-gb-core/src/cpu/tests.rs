@@ -1016,7 +1016,7 @@ fn test_call_a16() {
     assert_eq!(cpu.registers.pc, 0x0103);
     assert_eq!(
         cpu.phase,
-        CpuPhase::DecrementSp(instruction, 0x1234),
+        CpuPhase::DecrementSpForWrite(instruction, 0x1234),
         "test failed for CALL a16"
     );
 
@@ -1026,7 +1026,7 @@ fn test_call_a16() {
     assert_eq!(cpu.registers.sp, 0xFFFD);
     assert_eq!(
         cpu.phase,
-        CpuPhase::SetSpHigh(instruction, 0x1234),
+        CpuPhase::WriteSpMemHigh(instruction, 0x1234),
         "test failed for CALL a16"
     );
 
@@ -1037,7 +1037,7 @@ fn test_call_a16() {
     assert_eq!(bus.read8(0xFFFD), 0x01);
     assert_eq!(
         cpu.phase,
-        CpuPhase::SetSpLow(instruction, 0x1234),
+        CpuPhase::WriteSpMemLow(instruction, 0x1234),
         "test failed for CALL a16"
     );
 
@@ -1100,7 +1100,7 @@ fn test_call_with_condition() {
             if condition_met {
                 assert_eq!(
                     cpu.phase,
-                    CpuPhase::DecrementSp(instruction, 0x1234),
+                    CpuPhase::DecrementSpForWrite(instruction, 0x1234),
                     "test failed for {instruction:?}, condition_met={condition_met}"
                 );
                 // M4: SP -= 1
@@ -1109,7 +1109,7 @@ fn test_call_with_condition() {
                 assert_eq!(cpu.registers.sp, 0xFFFD);
                 assert_eq!(
                     cpu.phase,
-                    CpuPhase::SetSpHigh(instruction, 0x1234),
+                    CpuPhase::WriteSpMemHigh(instruction, 0x1234),
                     "test failed for {instruction:?}, condition_met={condition_met}"
                 );
 
@@ -1120,7 +1120,7 @@ fn test_call_with_condition() {
                 assert_eq!(bus.read8(0xFFFD), 0x01);
                 assert_eq!(
                     cpu.phase,
-                    CpuPhase::SetSpLow(instruction, 0x1234),
+                    CpuPhase::WriteSpMemLow(instruction, 0x1234),
                     "test failed for {instruction:?}, condition_met={condition_met}"
                 );
 
@@ -1196,7 +1196,6 @@ fn test_ret() {
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
 }
 
-
 #[test]
 fn test_ret_i() {
     let instruction = CpuInstruction::RetI;
@@ -1263,9 +1262,7 @@ fn test_ret_with_condition() {
             let flag = condition_met == flag_when_met;
 
             match condition {
-                CpuCondition::NZ | CpuCondition::Z => {
-                    cpu.registers.f.zero = flag
-                }
+                CpuCondition::NZ | CpuCondition::Z => cpu.registers.f.zero = flag,
                 CpuCondition::NC | CpuCondition::C => {
                     cpu.registers.f.carry = flag;
                 }
@@ -1363,10 +1360,137 @@ fn test_ld_sp_imm16() {
     cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(cpu.registers.pc, 0x0103);
     assert_eq!(
-        cpu.registers.sp,
-        0x1234,
+        cpu.registers.sp, 0x1234,
         "test failed for LD SP, imm16: expected SP=0x1234 but got SP={:04X}",
         cpu.registers.sp
     );
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+}
+
+#[test]
+fn test_push_r16() {
+    for register in CpuReg16::iter() {
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
+        let mut cpu = Cpu::new_post_boot();
+        let r16_value = rand::random_range(u16::MIN..=u16::MAX);
+        cpu.registers.set_r16(register, r16_value);
+        cpu.registers.sp = 0xFFFC;
+        bus.rom[0x0100] = cpu.encode_instruction(CpuInstruction::PushR16(register));
+
+        // M1: Fetch opcode
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::DecrementSp(register),
+            "test failed for PUSH {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0101);
+        assert_eq!(cpu.registers.sp, 0xFFFC);
+
+        // M2: SP -= 1
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::PushR16High(register),
+            "test failed for PUSH {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0101);
+        assert_eq!(cpu.registers.sp, 0xFFFB);
+
+        // M3: Write high byte of r16 to [SP], SP -= 1
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::PushR16Low(register),
+            "test failed for PUSH {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0101);
+        assert_eq!(cpu.registers.sp, 0xFFFA);
+        assert_eq!(
+            bus.read8(0xFFFB),
+            (r16_value >> 8) as u8,
+            "test failed for PUSH {:?}: expected high byte at [SP+1] to be {:02X} but got {:02X}",
+            register,
+            (r16_value >> 8) as u8,
+            bus.read8(0xFFFB)
+        );
+
+        // M4: Write low byte of r16 to [SP], SP = SP + 0, PC = PC + 1
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchOpcode,
+            "test failed for PUSH {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0101);
+    }
+}
+
+#[test]
+fn test_pop_r16() {
+    for register in CpuReg16::iter() {
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
+        let mut cpu = Cpu::new_post_boot();
+        let r16_value = rand::random_range(u16::MIN..=u16::MAX);
+        cpu.registers.sp = 0xFFFC;
+        bus.write8(0xFFFC, (r16_value & 0xFF) as u8); // low byte
+        bus.write8(0xFFFD, (r16_value >> 8) as u8); // high byte
+        bus.rom[0x0100] = cpu.encode_instruction(CpuInstruction::PopR16(register));
+
+        // M1: Fetch opcode
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::PopR16Low(register),
+            "test failed for POP {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0101);
+
+        // M2: Read low byte from [SP], SP += 1
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::PopR16High(register),
+            "test failed for POP {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0101);
+        assert_eq!(
+            cpu.registers.sp, 0xFFFD,
+            "test failed for POP {:?}: expected SP=0xFFFD but got SP={:04X}",
+            register, cpu.registers.sp
+        );
+        assert_eq!(
+            cpu.registers.get_r16(register) & 0x00FF,
+            r16_value & 0x00FF,
+            "test failed for POP {:?}: expected low byte of r16={:02X} but got {:02X}",
+            register, r16_value & 0x00FF, cpu.registers.get_r16(register) & 0x00FF
+        );
+
+        // M3: Read high byte from [SP], SP += 1, set r16 to the value read
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(
+            cpu.phase,
+            CpuPhase::FetchOpcode,
+            "test failed for POP {:?}",
+            register
+        );
+        assert_eq!(cpu.registers.pc, 0x0101);
+        assert_eq!(
+            cpu.registers.sp, 0xFFFE,
+            "test failed for POP {:?}: expected SP=0xFFFE but got SP={:04X}",
+            register, cpu.registers.sp
+        );
+        assert_eq!(
+            cpu.registers.get_r16(register),
+            r16_value,
+            "test failed for POP {:?}: expected r16={:04X} but got r16={:04X}",
+            register, r16_value, cpu.registers.get_r16(register)
+        );
+    }
 }
