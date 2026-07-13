@@ -13,6 +13,7 @@ This is a list of references that I used to learn.
 
 - [计算机体系结构基础](https://foxsen.github.io/archbase/) - A e-book about computer architecture in Chinese.
 - [Endianness](https://en.wikipedia.org/wiki/Endianness) - Why do we have little-endian and big-endian?
+- [Two's Complement](https://www.cs.cornell.edu/~tomf/notes/cps104/twoscomp.html) - About two's complement representation of signed integers.
 
 ## GameBoy
 

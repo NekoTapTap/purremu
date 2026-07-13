@@ -1606,3 +1606,41 @@ fn test_ld_a_addr() {
         "test failed for LD A, (a16)"
     );
 }
+
+#[test]
+fn test_add_sp_e8() {
+    let instruction = CpuInstruction::AddSpE8;
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new_post_boot();
+    cpu.registers.sp = 0xE008;
+    bus.rom[0x0100] = cpu.encode_instruction(instruction);
+    bus.rom[0x0101] = 0xF8; // -8
+
+    // M1: Fetch opcode
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.phase, CpuPhase::FetchE8(instruction));
+    assert_eq!(cpu.registers.pc, 0x0101);
+    assert_eq!(cpu.registers.sp, 0xE008);
+
+    // M2: Fetch e8
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_ne!(cpu.phase, CpuPhase::FetchOpcode);
+    assert_eq!(cpu.registers.pc, 0x0102);
+    assert_eq!(cpu.registers.sp, 0xE008);
+
+    // M3: Add the low bytes and update flags
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_ne!(cpu.phase, CpuPhase::FetchOpcode);
+    assert_eq!(cpu.registers.pc, 0x0102);
+    assert_eq!(cpu.registers.sp, 0xE008);
+    assert!(!cpu.registers.f.zero);
+    assert!(!cpu.registers.f.subtract);
+    assert!(cpu.registers.f.half_carry);
+    assert!(cpu.registers.f.carry);
+
+    // M4: Add the high bytes and commit SP
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+    assert_eq!(cpu.registers.pc, 0x0102);
+    assert_eq!(cpu.registers.sp, 0xE000);
+}

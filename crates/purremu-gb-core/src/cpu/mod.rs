@@ -27,6 +27,9 @@ pub enum CpuPhase {
     ApplyAbsoluteJump(u16),
     ApplyAbsoluteJumpEnableInterrupts(u16),
 
+    AddSpE8Low(u8),
+    AddSpE8High(u8, u8),
+
     DecrementSpForWrite(CpuInstruction, u16),
     DecrementSp(CpuReg16),
     WriteSpMemHigh(CpuInstruction, u16),
@@ -336,7 +339,13 @@ impl Cpu {
     }
 
     fn fetch_e8(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
-        let offset = self.fetch8(bus) as i8;
+        let raw_offset = self.fetch8(bus);
+        if instruction == CpuInstruction::AddSpE8 {
+            self.phase = CpuPhase::AddSpE8Low(raw_offset);
+            return;
+        }
+
+        let offset = raw_offset as i8;
         let should_jump = match instruction {
             CpuInstruction::JrNzE8 => !self.registers.f.zero,
             CpuInstruction::JrZE8 => self.registers.f.zero,
@@ -354,6 +363,30 @@ impl Cpu {
         }
 
         self.phase = CpuPhase::ApplyRelativeJump(offset);
+    }
+
+    fn add_sp_e8_low(&mut self, raw_offset: u8) {
+        let [sp_low, _] = self.registers.sp.to_le_bytes();
+        let (result_low, reg) = sp_low.cpu_add(raw_offset, false);
+        let adjustment = if raw_offset & 0x80 != 0 { 0xFF } else { 0x00 };
+
+        // There is no signed types in the Gameboy CPU,
+        // so carry and half-carry flags still calculated as if the offset was unsigned.
+        self.registers.f.zero = false;
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = reg.half_carry;
+        self.registers.f.carry = reg.carry;
+        self.phase = CpuPhase::AddSpE8High(result_low, adjustment);
+    }
+
+    fn add_sp_e8_high(&mut self, result_low: u8, adjustment: u8) {
+        let [_, sp_high] = self.registers.sp.to_le_bytes();
+        let result_high = sp_high
+            .wrapping_add(adjustment)
+            .wrapping_add(u8::from(self.registers.f.carry));
+
+        self.registers.sp = u16::from_le_bytes([result_low, result_high]);
+        self.phase = CpuPhase::FetchOpcode;
     }
 
     fn fetch_a16_low(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
@@ -542,7 +575,8 @@ impl Cpu {
             | CpuInstruction::JrZE8
             | CpuInstruction::JrNcE8
             | CpuInstruction::JrCE8
-            | CpuInstruction::JrE8 => {
+            | CpuInstruction::JrE8
+            | CpuInstruction::AddSpE8 => {
                 self.phase = CpuPhase::FetchE8(instruction);
             }
             CpuInstruction::JpNzA16
@@ -807,6 +841,10 @@ impl Cpu {
             CpuPhase::PopR16High(register) => self.pop_r16_high(register, bus),
             CpuPhase::FetchA16Mem(instruction, addr) => self.fetch_a16_mem(instruction, addr, bus),
             CpuPhase::FetchR8(instruction) => self.phase_fetch_r8(instruction, bus),
+            CpuPhase::AddSpE8Low(raw_offset) => self.add_sp_e8_low(raw_offset),
+            CpuPhase::AddSpE8High(result_low, adjustment) => {
+                self.add_sp_e8_high(result_low, adjustment)
+            }
         }
     }
 
