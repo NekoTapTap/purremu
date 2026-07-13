@@ -8,7 +8,7 @@ pub(crate) mod instructions;
 pub(crate) mod registers;
 
 use cpu_arithmetic::CpuArithmetic;
-use instructions::CpuInstruction;
+use instructions::{CpuCondition, CpuInstruction};
 use registers::{CpuReg8, CpuReg16, CpuRegisters};
 
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -23,10 +23,16 @@ pub enum CpuPhase {
     FetchA16High(CpuInstruction, u8),
     ApplyRelativeJump(i8),
     ApplyAbsoluteJump(u16),
+    ApplyAbsoluteJumpEnableInterrupts(u16),
 
     DecrementSp(CpuInstruction, u16),
     SetSpHigh(CpuInstruction, u16),
     SetSpLow(CpuInstruction, u16),
+
+    ReadSpHigh(CpuInstruction, u8),
+    ReadSpLow(CpuInstruction),
+
+    CheckRetCondition(CpuCondition),
 }
 
 pub struct Cpu {
@@ -394,6 +400,23 @@ impl Cpu {
         self.phase = CpuPhase::FetchOpcode;
     }
 
+    fn check_return_condition(&mut self, condition: CpuCondition) {
+        let should_return = match condition {
+            CpuCondition::NZ => !self.registers.f.zero,
+            CpuCondition::Z => self.registers.f.zero,
+            CpuCondition::NC => !self.registers.f.carry,
+            CpuCondition::C => self.registers.f.carry,
+            CpuCondition::None => true,
+        };
+
+        if !should_return {
+            self.phase = CpuPhase::FetchOpcode;
+            return;
+        }
+
+        self.phase = CpuPhase::ReadSpLow(CpuInstruction::Ret(condition));
+    }
+
     fn phase_fetch_opcode(&mut self, bus: &MemoryBus) {
         let opcode = self.fetch8(bus);
 
@@ -477,6 +500,15 @@ impl Cpu {
                 self.ime = true;
                 self.phase = CpuPhase::FetchOpcode;
             }
+            CpuInstruction::Ret(CpuCondition::None) => {
+                self.phase = CpuPhase::ReadSpLow(instruction);
+            }
+            CpuInstruction::Ret(cond) => {
+                self.phase = CpuPhase::CheckRetCondition(cond);
+            }
+            CpuInstruction::RetI => {
+                self.phase = CpuPhase::ReadSpLow(instruction);
+            }
             _ => {
                 panic!(
                     "No such instruction: {:?} ({:02X})",
@@ -528,6 +560,35 @@ impl Cpu {
         }
     }
 
+    fn read_sp_low(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
+        match instruction {
+            CpuInstruction::Ret(_) | CpuInstruction::RetI => {
+                let low_byte = self.read8(bus, self.registers.sp);
+                self.registers.sp += 1;
+                self.phase = CpuPhase::ReadSpHigh(instruction, low_byte);
+            }
+            _ => {
+                panic!("No such instruction: {:?}", instruction);
+            }
+        }
+    }
+
+    fn read_sp_high(&mut self, instruction: CpuInstruction, low_byte: u8, bus: &MemoryBus) {
+        let high_byte = self.read8(bus, self.registers.sp);
+        self.registers.sp += 1;
+
+        let addr = ((high_byte as u16) << 8) | (low_byte as u16);
+
+        match instruction {
+            CpuInstruction::Ret(_) => self.phase = CpuPhase::ApplyAbsoluteJump(addr),
+            CpuInstruction::RetI => self.phase = CpuPhase::ApplyAbsoluteJumpEnableInterrupts(addr),
+
+            _ => {
+                panic!("No such instruction: {:?}", instruction);
+            }
+        }
+    }
+
     pub fn step(&mut self, bus: &mut MemoryBus) {
         if self.t_cycles_until_step != 0 {
             self.t_cycles_until_step -= 1;
@@ -550,8 +611,17 @@ impl Cpu {
             CpuPhase::DecrementSp(instruction, addr) => self.decrement_sp(instruction, addr),
             CpuPhase::SetSpHigh(instruction, addr) => self.set_sp_high(instruction, addr, bus),
             CpuPhase::SetSpLow(instruction, addr) => self.set_sp_low(instruction, addr, bus),
+            CpuPhase::ReadSpHigh(instruction, high_byte) => {
+                self.read_sp_high(instruction, high_byte, bus)
+            }
+            CpuPhase::CheckRetCondition(condition) => self.check_return_condition(condition),
+            CpuPhase::ReadSpLow(instruction) => self.read_sp_low(instruction, bus),
             CpuPhase::ApplyRelativeJump(offset) => self.apply_relative_jump(offset),
             CpuPhase::ApplyAbsoluteJump(addr) => self.apply_absolute_jump(addr),
+            CpuPhase::ApplyAbsoluteJumpEnableInterrupts(addr) => {
+                self.apply_absolute_jump(addr);
+                self.ime = true;
+            }
         }
     }
 
