@@ -80,6 +80,7 @@ impl Cpu {
         self.instruction_set[row][col]
     }
 
+    #[cfg(test)]
     fn encode_instruction(&self, instruction: CpuInstruction) -> u8 {
         let row = self
             .instruction_set
@@ -213,8 +214,12 @@ impl Cpu {
         let low_byte = self.fetch8(bus);
         match instruction {
             CpuInstruction::LdR16Imm16(register) => {
-                self.phase = CpuPhase::FetchImm16High(instruction);
                 self.registers.set_r16_low(register, low_byte);
+                self.phase = CpuPhase::FetchImm16High(instruction);
+            }
+            CpuInstruction::LdSpImm16 => {
+                self.registers.sp = low_byte as u16; // set low byte of SP
+                self.phase = CpuPhase::FetchImm16High(instruction);
             }
             _ => {
                 panic!("No such instruction: {:?}", instruction);
@@ -227,6 +232,10 @@ impl Cpu {
         match instruction {
             CpuInstruction::LdR16Imm16(register) => {
                 self.registers.set_r16_high(register, high_byte);
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::LdSpImm16 => {
+                self.registers.sp |= (high_byte as u16) << 8; // set high byte of SP
                 self.phase = CpuPhase::FetchOpcode;
             }
             _ => {
@@ -432,6 +441,11 @@ impl Cpu {
             | CpuInstruction::XorAImm8 => {
                 self.phase = CpuPhase::FetchImm8(instruction);
             }
+            CpuInstruction::LdR8R8(dest, src) => {
+                let value = self.registers.get_r8(src);
+                self.registers.set_r8(dest, value);
+                self.phase = CpuPhase::FetchOpcode;
+            }
             CpuInstruction::AddAR8(register) => {
                 self.phase_add_a_r8(register, false);
             }
@@ -447,7 +461,8 @@ impl Cpu {
             CpuInstruction::SbcAR8(register) => {
                 self.phase_sub_a_r8(register, self.registers.f.carry);
             }
-            CpuInstruction::LdR16Imm16(_) => {
+            CpuInstruction::LdR16Imm16(_)
+            | CpuInstruction::LdSpImm16 => {
                 self.phase = CpuPhase::FetchImm16Low(instruction);
             }
             CpuInstruction::AndAR8(register) => {
@@ -511,9 +526,9 @@ impl Cpu {
             }
             _ => {
                 panic!(
-                    "No such instruction: {:?} ({:02X})",
+                    "No such instruction: {:?} (0X{:02X})",
                     instruction,
-                    self.encode_instruction(instruction)
+                    opcode
                 );
             }
         }

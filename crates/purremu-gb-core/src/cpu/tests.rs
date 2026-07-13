@@ -1335,3 +1335,38 @@ fn test_ret_with_condition() {
         }
     }
 }
+
+#[test]
+fn test_ld_sp_imm16() {
+    let instruction = CpuInstruction::LdSpImm16;
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new_post_boot();
+    bus.rom[0x0100] = cpu.encode_instruction(instruction);
+    bus.rom[0x0101] = 0x34;
+    bus.rom[0x0102] = 0x12;
+
+    // M1: Fetch opcode
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x0101);
+    assert_eq!(cpu.phase, CpuPhase::FetchImm16Low(instruction));
+
+    // M2: Fetch low byte of immediate value
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x0102);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchImm16High(instruction),
+        "test failed for LD SP, imm16"
+    );
+
+    // M3: Fetch high byte of immediate value and set SP
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x0103);
+    assert_eq!(
+        cpu.registers.sp,
+        0x1234,
+        "test failed for LD SP, imm16: expected SP=0x1234 but got SP={:04X}",
+        cpu.registers.sp
+    );
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+}

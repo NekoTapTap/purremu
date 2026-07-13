@@ -20,6 +20,7 @@ pub(crate) enum CpuInstruction {
     LdAR16mem(CpuReg16),
     LdHlMemR8(CpuReg8),
     LdHlMemImm8,
+    LdSpImm16,
 
     IncR8(CpuReg8),
     IncR16(CpuReg8, CpuReg8),
@@ -90,7 +91,7 @@ impl Cpu {
     /* 0x */[Nop        , LdR16Imm16(BC), LdR16memA(BC), IncR16(B,C), IncR8(B)   , DecR8(B)   , LdR8Imm8(B), NoImpl     , NoImpl     , AddHlR16(BC), LdAR16mem(BC), DecR16(BC), IncR8(C)    , DecR8(C)   , LdR8Imm8(C), NoImpl     ],
     /* 1x */[NoImpl     , LdR16Imm16(DE), LdR16memA(DE), IncR16(D,E), IncR8(D)   , DecR8(D)   , LdR8Imm8(D), NoImpl     , JrE8       , AddHlR16(DE), LdAR16mem(DE), DecR16(DE), IncR8(E)    , DecR8(E)   , LdR8Imm8(E), NoImpl     ],
     /* 2x */[JrNzE8     , LdR16Imm16(HL), LdR16memA(HL), IncR16(H,L), IncR8(H)   , DecR8(H)   , LdR8Imm8(H), NoImpl     , JrZE8      , AddHlR16(HL), LdAR16mem(HL), DecR16(HL), IncR8(L)    , DecR8(L)   , LdR8Imm8(L), NoImpl     ],
-    /* 3x */[JrNcE8     , NoImpl       , NoImpl        , NoImpl     , NoImpl     , NoImpl     , LdHlMemImm8, NoImpl     , JrCE8      , NoImpl      , NoImpl       , NoImpl    , IncR8(A)    , DecR8(A)   , LdR8Imm8(A), NoImpl     ],
+    /* 3x */[JrNcE8     , LdSpImm16     , NoImpl        , NoImpl     , NoImpl     , NoImpl     , LdHlMemImm8, NoImpl     , JrCE8      , NoImpl      , NoImpl       , NoImpl    , IncR8(A)    , DecR8(A)   , LdR8Imm8(A), NoImpl     ],
 
     /* 4x */[LdR8R8(B,B), LdR8R8(B,C)  , LdR8R8(B,D)   , LdR8R8(B,E), LdR8R8(B,H), LdR8R8(B,L), NoImpl   , LdR8R8(B,A)  , LdR8R8(C,B), LdR8R8(C,C) , LdR8R8(C,D)  , LdR8R8(C,E), LdR8R8(C,H), LdR8R8(C,L), NoImpl     , LdR8R8(C,A)],
     /* 5x */[LdR8R8(D,B), LdR8R8(D,C)  , LdR8R8(D,D)   , LdR8R8(D,E), LdR8R8(D,H), LdR8R8(D,L), NoImpl   , LdR8R8(D,A)  , LdR8R8(E,B), LdR8R8(E,C) , LdR8R8(E,D)  , LdR8R8(E,E), LdR8R8(E,H), LdR8R8(E,L), NoImpl     , LdR8R8(E,A)],
