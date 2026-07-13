@@ -21,6 +21,8 @@ pub(crate) enum CpuInstruction {
     LdHlMemR8(CpuReg8),
     LdHlMemImm8,
     LdSpImm16,
+    LdAddrA,
+    LdAAddr,
 
     IncR8(CpuReg8),
     IncR16(CpuReg16),
@@ -111,8 +113,8 @@ impl Cpu {
 
     /* Cx */[Ret(NZ)    , PopR16(BC)   , JpNzA16       , JpA16      , CallNzA16  , PushR16(BC), AddAImm8 , NoImpl      , Ret(Z)     , Ret(None)     , JpZA16      , NoImpl     , CallZA16   , CallA16    , AdcAImm8   , NoImpl     ],
     /* Dx */[Ret(NC)    , PopR16(DE)   , JpNcA16       , Illegal    , CallNcA16  , PushR16(DE), SubAImm8 , NoImpl      , Ret(CondC) , RetI          , JpCA16      , Illegal    , CallCA16   , Illegal    , SbcAImm8   , NoImpl     ],
-    /* Ex */[NoImpl     , PopR16(HL)   , NoImpl        , Illegal    , Illegal    , PushR16(HL), AndAImm8 , NoImpl      , NoImpl     , JpHl          , NoImpl      , Illegal    , Illegal    , Illegal    , XorAImm8   , NoImpl     ],
-    /* Fx */[NoImpl     , PopAF        , NoImpl        , DI         , Illegal    , PushAF     , OrAImm8  , NoImpl      , NoImpl     , NoImpl        , NoImpl      , EI         , Illegal    , Illegal    , CpAImm8    , NoImpl     ],
+    /* Ex */[NoImpl     , PopR16(HL)   , NoImpl        , Illegal    , Illegal    , PushR16(HL), AndAImm8 , NoImpl      , NoImpl     , JpHl          , LdAddrA     , Illegal    , Illegal    , Illegal    , XorAImm8   , NoImpl     ],
+    /* Fx */[NoImpl     , PopAF        , NoImpl        , DI         , Illegal    , PushAF     , OrAImm8  , NoImpl      , NoImpl     , NoImpl        , LdAAddr     , EI         , Illegal    , Illegal    , CpAImm8    , NoImpl     ],
         ]
     }
 }

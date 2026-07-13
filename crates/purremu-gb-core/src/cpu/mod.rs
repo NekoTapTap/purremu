@@ -21,6 +21,7 @@ pub enum CpuPhase {
     FetchE8(CpuInstruction),
     FetchA16Low(CpuInstruction),
     FetchA16High(CpuInstruction, u8),
+    FetchA16Mem(CpuInstruction, u16),
     ApplyRelativeJump(i8),
     ApplyAbsoluteJump(u16),
     ApplyAbsoluteJumpEnableInterrupts(u16),
@@ -327,7 +328,9 @@ impl Cpu {
             | CpuInstruction::CallZA16
             | CpuInstruction::CallCA16
             | CpuInstruction::CallNcA16
-            | CpuInstruction::CallNzA16 => {
+            | CpuInstruction::CallNzA16
+            | CpuInstruction::LdAAddr
+            | CpuInstruction::LdAddrA => {
                 self.phase = CpuPhase::FetchA16High(instruction, low_byte);
             }
             _ => {
@@ -402,6 +405,9 @@ impl Cpu {
                     return;
                 }
                 self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::LdAAddr | CpuInstruction::LdAddrA => {
+                self.phase = CpuPhase::FetchA16Mem(instruction, addr);
             }
             _ => {
                 panic!("No such instruction: {:?}", instruction);
@@ -506,7 +512,9 @@ impl Cpu {
             | CpuInstruction::CallNzA16
             | CpuInstruction::CallZA16
             | CpuInstruction::CallNcA16
-            | CpuInstruction::CallCA16 => {
+            | CpuInstruction::CallCA16
+            | CpuInstruction::LdAAddr
+            | CpuInstruction::LdAddrA => {
                 self.phase = CpuPhase::FetchA16Low(instruction);
             }
             CpuInstruction::JpHl => {
@@ -699,6 +707,24 @@ impl Cpu {
         self.phase = CpuPhase::FetchOpcode;
     }
 
+    fn fetch_a16_mem(&mut self, instruction: CpuInstruction, addr: u16, bus: &mut MemoryBus) {
+        match instruction {
+            CpuInstruction::LdAAddr => {
+                let value = self.read8(bus, addr);
+                self.registers.set_r8(CpuReg8::A, value);
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::LdAddrA => {
+                let value = self.registers.get_r8(CpuReg8::A);
+                bus.write8(addr, value);
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            _ => {
+                panic!("No such instruction: {:?}", instruction);
+            }
+        }
+    }
+
     pub fn step(&mut self, bus: &mut MemoryBus) {
         if self.t_cycles_until_step != 0 {
             self.t_cycles_until_step -= 1;
@@ -739,6 +765,7 @@ impl Cpu {
             CpuPhase::DecrementSp(register) => self.decrement_sp(register),
             CpuPhase::PopR16Low(register) => self.pop_r16_low(register, bus),
             CpuPhase::PopR16High(register) => self.pop_r16_high(register, bus),
+            CpuPhase::FetchA16Mem(instruction, addr) => self.fetch_a16_mem(instruction, addr, bus),
         }
     }
 

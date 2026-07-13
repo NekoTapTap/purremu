@@ -1494,3 +1494,115 @@ fn test_pop_r16() {
         );
     }
 }
+
+#[test]
+fn test_ld_addr_a() {
+    let instruction = CpuInstruction::LdAddrA;
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new_post_boot();
+    let a16_value = rand_external_ram_addr(); // Random value in the range of external RAM
+    let a_value = rand::random_range(u8::MIN..=u8::MAX);
+    bus.rom[0x0100] = cpu.encode_instruction(instruction);
+    bus.rom[0x0101] = (a16_value & 0xFF) as u8; // low byte
+    bus.rom[0x0102] = (a16_value >> 8) as u8; // high byte
+
+    cpu.registers.set_r8(CpuReg8::A, a_value);
+
+    // M1: Fetch opcode
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchA16Low(instruction),
+        "test failed for LD (a16), A"
+    );
+    assert_eq!(cpu.registers.pc, 0x0101);
+
+    // M2: Fetch low byte of address
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchA16High(instruction, (a16_value & 0xFF) as u8),
+        "test failed for LD (a16), A"
+    );
+    assert_eq!(cpu.registers.pc, 0x0102);
+
+    // M3: Fetch high byte of address
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchA16Mem(instruction, a16_value),
+        "test failed for LD (a16), A"
+    );
+    assert_eq!(cpu.registers.pc, 0x0103);
+
+    // M4: Write A to memory at a16
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(
+        bus.read8(a16_value),
+        a_value,
+        "test failed for LD (a16), A: expected memory at {:04X} to be {:02X} but got {:02X}",
+        a16_value,
+        a_value,
+        bus.read8(a16_value)
+    );
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchOpcode,
+        "test failed for LD (a16), A"
+    );
+}
+
+#[test]
+fn test_ld_a_addr() {
+    let instruction = CpuInstruction::LdAAddr;
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new_post_boot();
+    let a16_value = rand_external_ram_addr(); // Random value in the range of external RAM
+    let mem_value = rand::random_range(u8::MIN..=u8::MAX);
+    bus.rom[0x0100] = cpu.encode_instruction(instruction);
+    bus.rom[0x0101] = (a16_value & 0xFF) as u8; // low byte
+    bus.rom[0x0102] = (a16_value >> 8) as u8; // high byte
+    bus.write8(a16_value, mem_value);
+
+    // M1: Fetch opcode
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchA16Low(instruction),
+        "test failed for LD A, (a16)"
+    );
+    assert_eq!(cpu.registers.pc, 0x0101);
+
+    // M2: Fetch low byte of address
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchA16High(instruction, (a16_value & 0xFF) as u8),
+        "test failed for LD A, (a16)"
+    );
+    assert_eq!(cpu.registers.pc, 0x0102);
+
+    // M3: Fetch high byte of address
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchA16Mem(instruction, a16_value),
+        "test failed for LD A, (a16)"
+    );
+    assert_eq!(cpu.registers.pc, 0x0103);
+
+    // M4: Read memory at a16 into A
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(
+        cpu.registers.get_r8(CpuReg8::A),
+        mem_value,
+        "test failed for LD A, (a16): expected A to be {:02X} but got {:02X}",
+        mem_value,
+        cpu.registers.get_r8(CpuReg8::A)
+    );
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::FetchOpcode,
+        "test failed for LD A, (a16)"
+    );
+}
