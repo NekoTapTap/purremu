@@ -22,6 +22,7 @@ pub enum CpuPhase {
     FetchA16Low(CpuInstruction),
     FetchA16High(CpuInstruction, u8),
     FetchA16Mem(CpuInstruction, u16),
+    FetchR8(CpuInstruction),
     ApplyRelativeJump(i8),
     ApplyAbsoluteJump(u16),
     ApplyAbsoluteJumpEnableInterrupts(u16),
@@ -171,6 +172,46 @@ impl Cpu {
                 let hl_value = self.registers.get_r16(CpuReg16::HL);
                 let imm_value = self.fetch8(bus);
                 bus.write8(hl_value, imm_value);
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::LdhA8A => {
+                // LDH = LD (FF00 + a8), A
+                let addr = 0xFF00 | (self.fetch8(bus) as u16);
+                let value = self.registers.get_r8(CpuReg8::A);
+                bus.write8(addr, value);
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::LdhAA8 => {
+                let addr = 0xFF00 | (self.fetch8(bus) as u16);
+                let value = bus.read8(addr);
+                self.registers.set_r8(CpuReg8::A, value);
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::LdhAC | CpuInstruction::LdhCA => {
+                self.phase = CpuPhase::FetchR8(instruction)
+            }
+            _ => {
+                panic!("No such instruction: {:?}", instruction);
+            }
+        }
+    }
+
+    fn phase_fetch_r8(&mut self, instruction: CpuInstruction, bus: &mut MemoryBus) {
+        use CpuReg8::*;
+
+        match instruction {
+            CpuInstruction::LdhCA => {
+                // LDH (FF00 + C), A
+                let addr = 0xFF00 | (self.registers.get_r8(C) as u16);
+                let value = self.registers.get_r8(A);
+                bus.write8(addr, value);
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::LdhAC => {
+                // LDH A, (FF00 + C)
+                let addr = 0xFF00 | (self.registers.get_r8(C) as u16);
+                let value = bus.read8(addr);
+                self.registers.set_r8(A, value);
                 self.phase = CpuPhase::FetchOpcode;
             }
             _ => {
@@ -449,6 +490,8 @@ impl Cpu {
         match instruction {
             CpuInstruction::LdR8Imm8(_)
             | CpuInstruction::AdcAImm8
+            | CpuInstruction::LdhAA8
+            | CpuInstruction::LdhA8A
             | CpuInstruction::AddAImm8
             | CpuInstruction::SubAImm8
             | CpuInstruction::SbcAImm8
@@ -477,8 +520,7 @@ impl Cpu {
             CpuInstruction::SbcAR8(register) => {
                 self.phase_sub_a_r8(register, self.registers.f.carry);
             }
-            CpuInstruction::LdR16Imm16(_)
-            | CpuInstruction::LdSpImm16 => {
+            CpuInstruction::LdR16Imm16(_) | CpuInstruction::LdSpImm16 => {
                 self.phase = CpuPhase::FetchImm16Low(instruction);
             }
             CpuInstruction::AndAR8(register) => {
@@ -561,11 +603,7 @@ impl Cpu {
                 self.phase = CpuPhase::PopR16Low(r16);
             }
             _ => {
-                panic!(
-                    "No such instruction: {:?} (0X{:02X})",
-                    instruction,
-                    opcode
-                );
+                panic!("No such instruction: {:?} (0X{:02X})", instruction, opcode);
             }
         }
     }
@@ -744,7 +782,9 @@ impl Cpu {
             CpuPhase::FetchA16High(instruction, low_byte) => {
                 self.fetch_a16_high(instruction, low_byte, bus)
             }
-            CpuPhase::DecrementSpForWrite(instruction, addr) => self.decrement_sp_for_write(instruction, addr),
+            CpuPhase::DecrementSpForWrite(instruction, addr) => {
+                self.decrement_sp_for_write(instruction, addr)
+            }
             CpuPhase::IncrementR16(register) => self.increment_r16(register),
             CpuPhase::DecrementR16(register) => self.decrement_r16(register),
             CpuPhase::WriteSpMemHigh(instruction, addr) => self.set_sp_high(instruction, addr, bus),
@@ -766,6 +806,7 @@ impl Cpu {
             CpuPhase::PopR16Low(register) => self.pop_r16_low(register, bus),
             CpuPhase::PopR16High(register) => self.pop_r16_high(register, bus),
             CpuPhase::FetchA16Mem(instruction, addr) => self.fetch_a16_mem(instruction, addr, bus),
+            CpuPhase::FetchR8(instruction) => self.phase_fetch_r8(instruction, bus),
         }
     }
 
