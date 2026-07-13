@@ -32,6 +32,9 @@ pub enum CpuPhase {
     ReadSpHigh(CpuInstruction, u8),
     ReadSpLow(CpuInstruction),
 
+    DecrementR16(CpuReg16),
+    IncrementR16(CpuReg16),
+
     CheckRetCondition(CpuCondition),
 }
 
@@ -524,6 +527,18 @@ impl Cpu {
             CpuInstruction::RetI => {
                 self.phase = CpuPhase::ReadSpLow(instruction);
             }
+            CpuInstruction::DecR16(r16) => {
+                self.phase = CpuPhase::DecrementR16(r16);
+            }
+            CpuInstruction::IncR16(r16) => {
+                self.phase = CpuPhase::IncrementR16(r16);
+            }
+            CpuInstruction::DecR8(r8) => {
+                self.decrement_r8(r8);
+            }
+            CpuInstruction::IncR8(r8) => {
+                self.increment_r8(r8);
+            }
             _ => {
                 panic!(
                     "No such instruction: {:?} (0X{:02X})",
@@ -537,6 +552,40 @@ impl Cpu {
     fn decrement_sp(&mut self, instruction: CpuInstruction, addr: u16) {
         self.registers.sp -= 1;
         self.phase = CpuPhase::SetSpHigh(instruction, addr);
+    }
+
+    fn decrement_r8(&mut self, register: CpuReg8) {
+        let value = self.registers.get_r8(register);
+        let (result, flags) = value.cpu_sub(1, false);
+        self.registers.set_r8(register, result);
+        self.registers.f = flags;
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    fn increment_r8(&mut self, register: CpuReg8) {
+        let value = self.registers.get_r8(register);
+        let (result, flags) = value.cpu_add(1, false);
+        self.registers.set_r8(register, result);
+        self.registers.f = flags;
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    fn increment_r16(&mut self, register: CpuReg16) {
+        let value = self.registers.get_r16(register);
+        let (result, flags) = value.cpu_add(1, false);
+        self.registers.set_r16_high(register, (result >> 8) as u8);
+        self.registers.set_r16_low(register, result as u8);
+        self.registers.f = flags;
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    fn decrement_r16(&mut self, register: CpuReg16) {
+        let value = self.registers.get_r16(register);
+        let (result, flags) = value.cpu_sub(1, false);
+        self.registers.set_r16_high(register, (result >> 8) as u8);
+        self.registers.set_r16_low(register, result as u8);
+        self.registers.f = flags;
+        self.phase = CpuPhase::FetchOpcode;
     }
 
     fn set_sp_high(&mut self, instruction: CpuInstruction, addr: u16, bus: &mut MemoryBus) {
@@ -624,6 +673,8 @@ impl Cpu {
                 self.fetch_a16_high(instruction, low_byte, bus)
             }
             CpuPhase::DecrementSp(instruction, addr) => self.decrement_sp(instruction, addr),
+            CpuPhase::IncrementR16(register) => self.increment_r16(register),
+            CpuPhase::DecrementR16(register) => self.decrement_r16(register),
             CpuPhase::SetSpHigh(instruction, addr) => self.set_sp_high(instruction, addr, bus),
             CpuPhase::SetSpLow(instruction, addr) => self.set_sp_low(instruction, addr, bus),
             CpuPhase::ReadSpHigh(instruction, high_byte) => {
