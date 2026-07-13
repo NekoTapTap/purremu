@@ -989,3 +989,156 @@ fn test_jp_hl() {
     assert_eq!(cpu.registers.pc, hl_value);
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
 }
+
+#[test]
+fn test_call_a16() {
+    let instruction = CpuInstruction::CallA16;
+
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new_post_boot();
+    bus.rom[0x0100] = cpu.encode_instruction(instruction);
+    bus.rom[0x0101] = 0x34;
+    bus.rom[0x0102] = 0x12;
+
+    // M1: Fetch opcode
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x0101);
+    assert_eq!(cpu.phase, CpuPhase::FetchA16Low(instruction));
+
+    // M2: Fetch low byte of address
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x0102);
+    assert_eq!(cpu.phase, CpuPhase::FetchA16High(instruction, 0x34));
+
+    // M3: Fetch high byte of address
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x0103);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::DecrementSp(instruction, 0x1234),
+        "test failed for CALL a16"
+    );
+
+    // M4: SP -= 1
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x0103);
+    assert_eq!(cpu.registers.sp, 0xFFFD);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::SetSpHigh(instruction, 0x1234),
+        "test failed for CALL a16"
+    );
+
+    // M5: Set [SP] to high byte of return address, SP -= 1
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x0103);
+    assert_eq!(cpu.registers.sp, 0xFFFC);
+    assert_eq!(bus.read8(0xFFFD), 0x01);
+    assert_eq!(cpu.phase, CpuPhase::SetSpLow(instruction, 0x1234), "test failed for CALL a16");
+
+    // M6: Set [SP] to low byte of return address, PC = a16, Phase = FetchOpcode
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.sp, 0xFFFC);
+    assert_eq!(bus.read8(0xFFFC), 0x03);
+    assert_eq!(cpu.registers.pc, 0x1234);
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+}
+
+#[test]
+fn test_call_with_condition() {
+    let conditions = [
+        (CpuInstruction::CallNzA16, false),
+        (CpuInstruction::CallZA16, true),
+        (CpuInstruction::CallNcA16, false),
+        (CpuInstruction::CallCA16, true),
+    ];
+
+    for (instruction, flag_when_met) in conditions {
+        for condition_met in [true, false] {
+            let mut bus = MemoryBus::new(vec![0; 0x8000]);
+            let mut cpu = Cpu::new_post_boot();
+            let flag = condition_met == flag_when_met;
+
+            match instruction {
+                CpuInstruction::CallNzA16 | CpuInstruction::CallZA16 => cpu.registers.f.zero = flag,
+                CpuInstruction::CallNcA16 | CpuInstruction::CallCA16 => {
+                    cpu.registers.f.carry = flag;
+                }
+                _ => unreachable!(),
+            }
+
+            bus.rom[0x0100] = cpu.encode_instruction(instruction);
+            bus.rom[0x0101] = 0x34;
+            bus.rom[0x0102] = 0x12;
+
+            // M1: Fetch opcode
+            cpu_step_n(&mut cpu, &mut bus, 4);
+            assert_eq!(
+                cpu.phase,
+                CpuPhase::FetchA16Low(instruction),
+                "test failed for {instruction:?}, condition_met={condition_met}"
+            );
+            assert_eq!(cpu.registers.pc, 0x0101);
+
+            // M2: Fetch low byte of address
+            cpu_step_n(&mut cpu, &mut bus, 4);
+            assert_eq!(
+                cpu.phase,
+                CpuPhase::FetchA16High(instruction, 0x34),
+                "test failed for {instruction:?}, condition_met={condition_met}"
+            );
+            assert_eq!(cpu.registers.pc, 0x0102);
+
+            // M3: Fetch high byte of address
+            cpu_step_n(&mut cpu, &mut bus, 4);
+            assert_eq!(cpu.registers.pc, 0x0103);
+            if condition_met {
+                assert_eq!(
+                    cpu.phase,
+                    CpuPhase::DecrementSp(instruction, 0x1234),
+                    "test failed for {instruction:?}, condition_met={condition_met}"
+                );
+                // M4: SP -= 1
+                cpu_step_n(&mut cpu, &mut bus, 4);
+                assert_eq!(cpu.registers.pc, 0x0103);
+                assert_eq!(cpu.registers.sp, 0xFFFD);
+                assert_eq!(
+                    cpu.phase,
+                    CpuPhase::SetSpHigh(instruction, 0x1234),
+                    "test failed for {instruction:?}, condition_met={condition_met}"
+                );
+
+                // M5: Set [SP] to high byte of return address, SP -= 1
+                cpu_step_n(&mut cpu, &mut bus, 4);
+                assert_eq!(cpu.registers.pc, 0x0103);
+                assert_eq!(cpu.registers.sp, 0xFFFC);
+                assert_eq!(bus.read8(0xFFFD), 0x01);
+                assert_eq!(
+                    cpu.phase,
+                    CpuPhase::SetSpLow(instruction, 0x1234),
+                    "test failed for {instruction:?}, condition_met={condition_met}"
+                );
+
+                // M6: Set [SP] to low byte of return address, PC = a16, Phase = FetchOpcode
+                cpu_step_n(&mut cpu, &mut bus, 4);
+                assert_eq!(cpu.registers.sp, 0xFFFC);
+                assert_eq!(bus.read8(0xFFFC), 0x03);
+                assert_eq!(cpu.registers.pc, 0x1234);
+                assert_eq!(
+                    cpu.phase,
+                    CpuPhase::FetchOpcode,
+                    "test failed for {instruction:?}, condition_met={condition_met}"
+                );
+
+                continue;
+            }
+
+            assert_eq!(
+                cpu.phase,
+                CpuPhase::FetchOpcode,
+                "test failed for {instruction:?}, condition_met={condition_met}"
+            );
+            assert_eq!(cpu.registers.pc, 0x0103);
+        }
+    }
+}

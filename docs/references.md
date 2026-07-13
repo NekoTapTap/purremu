@@ -23,6 +23,7 @@ This is a list of references that I used to learn.
 - [Pandocs](https://gbdev.io/pandocs/) - The GameBoy Programming Manual. This is the most important reference for GameBoy development.
 - [gbops](https://izik1.github.io/gbops/) - A detailed opcode table for the GameBoy CPU.
 - [SameBoy](https://sameboy.github.io/) - A GameBoy emulator for multiple platforms.
+- [Gekkio](https://gekkio.fi/files/gb-docs/gbctr.pdf) - A detailed technical document about the GameBoy.
 
 ### Game Development
 

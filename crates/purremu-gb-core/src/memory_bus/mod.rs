@@ -3,6 +3,7 @@ use crate::serial::Serial;
 pub struct MemoryBus {
     pub rom: Vec<u8>,
     pub ram: Vec<u8>,
+    pub hram: Vec<u8>,
     pub serial: Serial,
 }
 
@@ -11,6 +12,7 @@ impl MemoryBus {
         Self {
             rom: rom_data,
             ram: vec![0; 0x2000],
+            hram: vec![0; 0x7F],
             serial: Serial::new(),
         }
     }
@@ -26,6 +28,7 @@ impl MemoryBus {
             // 0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize],
             0xFF01 => self.serial.data,
             0xFF02 => self.serial.control,
+            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             _ => 0,
         }
     }
@@ -40,6 +43,7 @@ impl MemoryBus {
             0xFF01 => self.serial.data = value,
             0xFF02 => self.serial.control = value,
             // 0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize] = value,
+            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = value,
             _ => {}
         }
     }
