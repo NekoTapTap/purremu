@@ -471,7 +471,7 @@ impl Cpu {
         self.registers.f.subtract = false;
         self.registers.f.half_carry = reg_low.half_carry;
         self.registers.f.carry = reg_high.carry;
-        self.registers.sp = u16::from_le_bytes([result_low, result_high]);
+        self.registers.set_r16(CpuReg16::HL, u16::from_le_bytes([result_low, result_high]));
         self.phase = CpuPhase::FetchOpcode;
     }
 
@@ -871,7 +871,6 @@ impl Cpu {
     fn push_r16_low(&mut self, register: CpuReg16, bus: &mut MemoryBus) {
         let value = self.registers.get_r16(register);
         bus.write8(self.registers.sp, value as u8);
-        self.registers.sp -= 1;
         self.phase = CpuPhase::FetchOpcode;
     }
 

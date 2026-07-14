@@ -117,7 +117,7 @@ impl CpuRegisters {
             CpuReg16::DE => self.e = value,
             CpuReg16::HL => self.l = value,
             CpuReg16::AF => self.f = CpuFlagsReg::from(value),
-            CpuReg16::SP => self.sp = value as u16,
+            CpuReg16::SP => self.sp = (self.sp & 0xFF00) | (value as u16),
         }
     }
 
