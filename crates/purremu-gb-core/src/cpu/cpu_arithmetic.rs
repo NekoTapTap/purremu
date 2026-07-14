@@ -10,6 +10,8 @@ where
     fn cpu_and(&self, value: Self) -> (Self, CpuFlagsReg);
     fn cpu_or(&self, value: Self) -> (Self, CpuFlagsReg);
     fn cpu_xor(&self, value: Self) -> (Self, CpuFlagsReg);
+    fn cpu_inc(&self) -> (Self, CpuFlagsReg);
+    fn cpu_dec(&self) -> (Self, CpuFlagsReg);
 }
 
 impl CpuArithmetic for u8 {
@@ -75,6 +77,14 @@ impl CpuArithmetic for u8 {
         };
         (result, flags)
     }
+
+    fn cpu_inc(&self) -> (Self, CpuFlagsReg) {
+        self.cpu_add(1, false)
+    }
+
+    fn cpu_dec(&self) -> (Self, CpuFlagsReg) {
+        self.cpu_sub(1, false)
+    }
 }
 
 impl CpuArithmetic for u16 {
@@ -118,5 +128,13 @@ impl CpuArithmetic for u16 {
 
     fn cpu_xor(&self, _value: u16) -> (Self, CpuFlagsReg) {
         unimplemented!("XOR operation is not defined for 16-bit values");
+    }
+
+    fn cpu_inc(&self) -> (Self, CpuFlagsReg) {
+        return self.cpu_add(1, false);
+    }
+
+    fn cpu_dec(&self) -> (Self, CpuFlagsReg) {
+        self.cpu_sub(1, false)
     }
 }

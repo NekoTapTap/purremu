@@ -30,6 +30,10 @@ pub enum CpuPhase {
     AddSpE8Low(u8),
     AddSpE8High(u8, u8),
 
+    LdHlSpE8(u8),
+
+    WriteMem(u16, u8),
+
     DecrementSpForWrite(CpuInstruction, u16),
     DecrementSp(CpuReg16),
     WriteSpMemHigh(CpuInstruction, u16),
@@ -193,6 +197,17 @@ impl Cpu {
             CpuInstruction::LdhAC | CpuInstruction::LdhCA => {
                 self.phase = CpuPhase::FetchR8(instruction)
             }
+            CpuInstruction::CpAImm8 => {
+                let value = self.fetch8(bus);
+
+                // Z: Set if A == value, reset otherwise
+                // N: Set
+                // C: Set if A < value, reset otherwise
+                // H: Set if borrow from bit 4, reset otherwise
+                let (_, flags) = self.registers.a.cpu_sub(value, false);
+                self.registers.f = flags;
+                self.phase = CpuPhase::FetchOpcode;
+            }
             _ => {
                 panic!("No such instruction: {:?}", instruction);
             }
@@ -329,8 +344,32 @@ impl Cpu {
                 bus.write8(hl_value, src_value);
                 self.phase = CpuPhase::FetchOpcode;
             }
+            CpuInstruction::LdR8HlMem(dest) => {
+                let hl_value = self.registers.get_r16(CpuReg16::HL);
+                let value = self.read8(bus, hl_value);
+                self.registers.set_r8(dest, value);
+                self.phase = CpuPhase::FetchOpcode;
+            }
             CpuInstruction::LdHlMemImm8 => {
                 self.phase = CpuPhase::FetchImm8(instruction);
+            }
+            CpuInstruction::LdHlIncMemA => self.ld_hl_mem_a(bus, true),
+            CpuInstruction::LdHlDecMemA => self.ld_hl_mem_a(bus, false),
+            CpuInstruction::LdAHlIncMem => self.ld_a_hl_mem(bus, true),
+            CpuInstruction::LdAHlDecMem => self.ld_a_hl_mem(bus, false),
+            CpuInstruction::IncHlMem => {
+                let hl_value = self.registers.get_r16(CpuReg16::HL);
+                let value = self.read8(bus, hl_value);
+                let (result, flags) = value.cpu_inc();
+                self.registers.f = flags;
+                self.phase = CpuPhase::WriteMem(hl_value, result);
+            }
+            CpuInstruction::DecHlMem => {
+                let hl_value = self.registers.get_r16(CpuReg16::HL);
+                let value = self.read8(bus, hl_value);
+                let (result, flags) = value.cpu_dec();
+                self.registers.f = flags;
+                self.phase = CpuPhase::WriteMem(hl_value, result);
             }
             _ => {
                 panic!("No such instruction: {:?}", instruction);
@@ -338,11 +377,52 @@ impl Cpu {
         }
     }
 
+    fn write_mem(&mut self, bus: &mut MemoryBus, addr: u16, value: u8) {
+        bus.write8(addr, value);
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    fn ld_a_hl_mem(&mut self, bus: &mut MemoryBus, increment: bool) {
+        let hl_value = self.registers.get_r16(CpuReg16::HL);
+        let value = self.read8(bus, hl_value);
+        self.registers.set_r8(CpuReg8::A, value);
+
+        let new_hl_value = if increment {
+            hl_value.wrapping_add(1)
+        } else {
+            hl_value.wrapping_sub(1)
+        };
+        self.registers.set_r16(CpuReg16::HL, new_hl_value);
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    fn ld_hl_mem_a(&mut self, bus: &mut MemoryBus, p: bool) {
+        let hl_value = self.registers.get_r16(CpuReg16::HL);
+        let value = self.registers.get_r8(CpuReg8::A);
+        bus.write8(hl_value, value);
+
+        let new_hl_value = if p {
+            hl_value.wrapping_add(1)
+        } else {
+            hl_value.wrapping_sub(1)
+        };
+        self.registers.set_r16(CpuReg16::HL, new_hl_value);
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
     fn fetch_e8(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
         let raw_offset = self.fetch8(bus);
-        if instruction == CpuInstruction::AddSpE8 {
-            self.phase = CpuPhase::AddSpE8Low(raw_offset);
-            return;
+        match instruction {
+            CpuInstruction::LdHlSpE8 => {
+                self.phase = CpuPhase::LdHlSpE8(raw_offset);
+                return;
+            }
+            CpuInstruction::AddSpE8 => {
+                self.phase = CpuPhase::AddSpE8Low(raw_offset);
+                return;
+            }
+
+            _ => {}
         }
 
         let offset = raw_offset as i8;
@@ -377,6 +457,22 @@ impl Cpu {
         self.registers.f.half_carry = reg.half_carry;
         self.registers.f.carry = reg.carry;
         self.phase = CpuPhase::AddSpE8High(result_low, adjustment);
+    }
+
+    fn ld_hl_sp_e8(&mut self, raw_offset: u8) {
+        let [sp_low, sp_high] = self.registers.sp.to_le_bytes();
+        let (result_low, reg_low) = sp_low.cpu_add(raw_offset, false);
+        let adjustment = if raw_offset & 0x80 != 0 { 0xFF } else { 0x00 };
+        let (result_high, reg_high) = sp_high.cpu_add(adjustment, reg_low.carry);
+
+        // There is no signed types in the Gameboy CPU,
+        // so carry and half-carry flags still calculated as if the offset was unsigned.
+        self.registers.f.zero = false;
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = reg_low.half_carry;
+        self.registers.f.carry = reg_high.carry;
+        self.registers.sp = u16::from_le_bytes([result_low, result_high]);
+        self.phase = CpuPhase::FetchOpcode;
     }
 
     fn add_sp_e8_high(&mut self, result_low: u8, adjustment: u8) {
@@ -530,7 +626,8 @@ impl Cpu {
             | CpuInstruction::SbcAImm8
             | CpuInstruction::AndAImm8
             | CpuInstruction::OrAImm8
-            | CpuInstruction::XorAImm8 => {
+            | CpuInstruction::XorAImm8
+            | CpuInstruction::CpAImm8 => {
                 self.phase = CpuPhase::FetchImm8(instruction);
             }
             CpuInstruction::LdR8R8(dest, src) => {
@@ -568,7 +665,14 @@ impl Cpu {
             CpuInstruction::LdAR16mem(_)
             | CpuInstruction::LdR16memA(_)
             | CpuInstruction::LdHlMemImm8
-            | CpuInstruction::LdHlMemR8(_) => {
+            | CpuInstruction::LdHlMemR8(_)
+            | CpuInstruction::LdR8HlMem(_)
+            | CpuInstruction::LdAHlDecMem
+            | CpuInstruction::LdAHlIncMem
+            | CpuInstruction::LdHlIncMemA
+            | CpuInstruction::LdHlDecMemA
+            | CpuInstruction::IncHlMem
+            | CpuInstruction::DecHlMem => {
                 self.phase = CpuPhase::FetchR16(instruction);
             }
             CpuInstruction::JrNzE8
@@ -576,7 +680,8 @@ impl Cpu {
             | CpuInstruction::JrNcE8
             | CpuInstruction::JrCE8
             | CpuInstruction::JrE8
-            | CpuInstruction::AddSpE8 => {
+            | CpuInstruction::AddSpE8
+            | CpuInstruction::LdHlSpE8 => {
                 self.phase = CpuPhase::FetchE8(instruction);
             }
             CpuInstruction::JpNzA16
@@ -646,7 +751,7 @@ impl Cpu {
     }
 
     fn decrement_sp_for_write(&mut self, instruction: CpuInstruction, addr: u16) {
-        self.registers.sp -= 1;
+        self.registers.sp = self.registers.sp.wrapping_sub(1);
         self.phase = CpuPhase::WriteSpMemHigh(instruction, addr);
     }
 
@@ -852,6 +957,8 @@ impl Cpu {
             CpuPhase::AddSpE8High(result_low, adjustment) => {
                 self.add_sp_e8_high(result_low, adjustment)
             }
+            CpuPhase::LdHlSpE8(raw_offset) => self.ld_hl_sp_e8(raw_offset),
+            CpuPhase::WriteMem(addr, value) => self.write_mem(bus, addr, value),
         }
     }
 

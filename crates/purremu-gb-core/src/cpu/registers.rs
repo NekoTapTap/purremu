@@ -14,6 +14,8 @@ pub(crate) enum CpuReg16 {
     BC,
     DE,
     HL,
+    AF,
+    SP,
 }
 
 pub(crate) struct CpuFlagsReg {
@@ -49,9 +51,9 @@ impl From<u8> for CpuFlagsReg {
     }
 }
 
-impl From<CpuFlagsReg> for u8 {
+impl From<&CpuFlagsReg> for u8 {
     #[rustfmt::skip]
-    fn from(flags: CpuFlagsReg) -> Self {
+    fn from(flags: &CpuFlagsReg) -> Self {
         (if flags.zero             { 0b1000_0000 } else { 0 })
             | (if flags.subtract   { 0b0100_0000 } else { 0 })
             | (if flags.half_carry { 0b0010_0000 } else { 0 })
@@ -114,6 +116,8 @@ impl CpuRegisters {
             CpuReg16::BC => self.c = value,
             CpuReg16::DE => self.e = value,
             CpuReg16::HL => self.l = value,
+            CpuReg16::AF => self.f = CpuFlagsReg::from(value),
+            CpuReg16::SP => self.sp = value as u16,
         }
     }
 
@@ -122,10 +126,11 @@ impl CpuRegisters {
             CpuReg16::BC => self.b = value,
             CpuReg16::DE => self.d = value,
             CpuReg16::HL => self.h = value,
+            CpuReg16::AF => self.a = value,
+            CpuReg16::SP => self.sp = (self.sp & 0x00FF) | ((value as u16) << 8),
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn set_r16(&mut self, register: CpuReg16, value: u16) {
         let high = (value >> 8) as u8;
         let low = (value & 0xFF) as u8;
@@ -138,6 +143,8 @@ impl CpuRegisters {
             CpuReg16::BC => ((self.b as u16) << 8) | (self.c as u16),
             CpuReg16::DE => ((self.d as u16) << 8) | (self.e as u16),
             CpuReg16::HL => ((self.h as u16) << 8) | (self.l as u16),
+            CpuReg16::AF => ((self.a as u16) << 8) | (u8::from(&self.f) as u16),
+            CpuReg16::SP => self.sp,
         }
     }
 }
