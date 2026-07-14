@@ -1879,3 +1879,256 @@ fn test_cb_hl_memory_timing() {
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(bus.read8(addr), 0x00);
 }
+
+#[test]
+fn test_base_decoder_only_marks_undefined_opcodes_as_illegal() {
+    let cpu = Cpu::new();
+    let undefined = [
+        0xD3, 0xDB, 0xDD, 0xE3, 0xE4, 0xEB, 0xEC, 0xED, 0xF4, 0xFC, 0xFD,
+    ];
+
+    for opcode in u8::MIN..=u8::MAX {
+        assert_eq!(
+            cpu.decode_instruction(opcode) == CpuInstruction::Illegal,
+            undefined.contains(&opcode),
+            "opcode {opcode:02X}"
+        );
+    }
+}
+
+#[test]
+fn test_accumulator_rotates_clear_zero_flag() {
+    let cases = [
+        (0x07, 0x80, false, 0x01, true),
+        (0x0F, 0x01, false, 0x80, true),
+        (0x17, 0x80, true, 0x01, true),
+        (0x1F, 0x01, true, 0x80, true),
+    ];
+
+    for (opcode, input, input_carry, expected, expected_carry) in cases {
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
+        let mut cpu = Cpu::new();
+        bus.rom[0] = opcode;
+        cpu.registers.a = input;
+        cpu.registers.f.zero = true;
+        cpu.registers.f.subtract = true;
+        cpu.registers.f.half_carry = true;
+        cpu.registers.f.carry = input_carry;
+
+        cpu_step_n(&mut cpu, &mut bus, 4);
+
+        assert_eq!(cpu.registers.a, expected, "opcode {opcode:02X}");
+        assert!(!cpu.registers.f.zero, "opcode {opcode:02X}");
+        assert!(!cpu.registers.f.subtract, "opcode {opcode:02X}");
+        assert!(!cpu.registers.f.half_carry, "opcode {opcode:02X}");
+        assert_eq!(cpu.registers.f.carry, expected_carry, "opcode {opcode:02X}");
+    }
+}
+
+#[test]
+fn test_daa_adjusts_addition_and_subtraction_results() {
+    let cases = [
+        (0x3C, false, false, false, 0x42, false, false),
+        (0x9A, false, false, false, 0x00, true, true),
+        (0x0F, true, true, false, 0x09, false, false),
+    ];
+
+    for (input, subtract, half_carry, carry, expected, zero, expected_carry) in cases {
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
+        let mut cpu = Cpu::new();
+        bus.rom[0] = 0x27;
+        cpu.registers.a = input;
+        cpu.registers.f.subtract = subtract;
+        cpu.registers.f.half_carry = half_carry;
+        cpu.registers.f.carry = carry;
+
+        cpu_step_n(&mut cpu, &mut bus, 4);
+
+        assert_eq!(cpu.registers.a, expected);
+        assert_eq!(cpu.registers.f.zero, zero);
+        assert_eq!(cpu.registers.f.subtract, subtract);
+        assert!(!cpu.registers.f.half_carry);
+        assert_eq!(cpu.registers.f.carry, expected_carry);
+    }
+}
+
+#[test]
+fn test_cpl_scf_and_ccf_preserve_their_unaffected_flags() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+    bus.rom[..3].copy_from_slice(&[0x2F, 0x37, 0x3F]);
+    cpu.registers.a = 0x0F;
+    cpu.registers.f.zero = true;
+    cpu.registers.f.carry = false;
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.a, 0xF0);
+    assert!(cpu.registers.f.zero);
+    assert!(cpu.registers.f.subtract);
+    assert!(cpu.registers.f.half_carry);
+    assert!(!cpu.registers.f.carry);
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert!(cpu.registers.f.zero);
+    assert!(!cpu.registers.f.subtract);
+    assert!(!cpu.registers.f.half_carry);
+    assert!(cpu.registers.f.carry);
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert!(cpu.registers.f.zero);
+    assert!(!cpu.registers.f.subtract);
+    assert!(!cpu.registers.f.half_carry);
+    assert!(!cpu.registers.f.carry);
+}
+
+#[test]
+fn test_alu_a_hl_memory_group() {
+    let cases = [
+        (0x86, 0x0F, 0x01, false, 0x10, false, false, true, false),
+        (0x8E, 0x0F, 0x00, true, 0x10, false, false, true, false),
+        (0x96, 0x10, 0x01, false, 0x0F, false, true, true, false),
+        (0x9E, 0x10, 0x00, true, 0x0F, false, true, true, false),
+        (0xA6, 0xF0, 0x0F, false, 0x00, true, false, true, false),
+        (0xAE, 0xF0, 0xFF, false, 0x0F, false, false, false, false),
+        (0xB6, 0xF0, 0x0F, false, 0xFF, false, false, false, false),
+        (0xBE, 0x10, 0x10, false, 0x10, true, true, false, false),
+    ];
+
+    for (opcode, a, value, carry, expected, zero, subtract, half_carry, result_carry) in cases {
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
+        let mut cpu = Cpu::new();
+        bus.rom[0] = opcode;
+        cpu.registers.a = a;
+        cpu.registers.f.carry = carry;
+        cpu.registers.set_r16(CpuReg16::HL, 0xC000);
+        bus.write8(0xC000, value);
+
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert!(matches!(cpu.phase, CpuPhase::FetchR16(_)));
+        cpu_step_n(&mut cpu, &mut bus, 4);
+
+        assert_eq!(cpu.phase, CpuPhase::FetchOpcode, "opcode {opcode:02X}");
+        assert_eq!(cpu.registers.a, expected, "opcode {opcode:02X}");
+        assert_eq!(cpu.registers.f.zero, zero, "opcode {opcode:02X}");
+        assert_eq!(cpu.registers.f.subtract, subtract, "opcode {opcode:02X}");
+        assert_eq!(
+            cpu.registers.f.half_carry, half_carry,
+            "opcode {opcode:02X}"
+        );
+        assert_eq!(cpu.registers.f.carry, result_carry, "opcode {opcode:02X}");
+    }
+}
+
+#[test]
+fn test_remaining_load_instructions() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+    bus.rom[..8].copy_from_slice(&[0x08, 0x00, 0xC0, 0xF9, 0xE2, 0xF2, 0x00, 0x00]);
+    cpu.registers.sp = 0x1234;
+    cpu.registers.set_r16(CpuReg16::HL, 0xABCD);
+    cpu.registers.a = 0x5A;
+    cpu.registers.c = 0x80;
+
+    cpu_step_n(&mut cpu, &mut bus, 20);
+    assert_eq!(bus.read8(0xC000), 0x34);
+    assert_eq!(bus.read8(0xC001), 0x12);
+
+    cpu_step_n(&mut cpu, &mut bus, 8);
+    assert_eq!(cpu.registers.sp, 0xABCD);
+
+    cpu_step_n(&mut cpu, &mut bus, 8);
+    assert_eq!(bus.read8(0xFF80), 0x5A);
+    bus.write8(0xFF80, 0xA5);
+    cpu_step_n(&mut cpu, &mut bus, 8);
+    assert_eq!(cpu.registers.a, 0xA5);
+}
+
+#[test]
+fn test_flag_rules_corrected_for_inc_dec_and_add_hl() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+    bus.rom[..3].copy_from_slice(&[0x04, 0x0B, 0x19]); // INC B; DEC BC; ADD HL,DE
+    cpu.registers.b = 0x0F;
+    cpu.registers.c = 0x00;
+    cpu.registers.set_r16(CpuReg16::HL, 1);
+    cpu.registers.set_r16(CpuReg16::DE, 1);
+    cpu.registers.f.zero = true;
+    cpu.registers.f.carry = true;
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.b, 0x10);
+    assert!(cpu.registers.f.carry);
+
+    let flags_before_dec = u8::from(&cpu.registers.f);
+    cpu_step_n(&mut cpu, &mut bus, 8);
+    assert_eq!(cpu.registers.get_r16(CpuReg16::BC), 0x0FFF);
+    assert_eq!(u8::from(&cpu.registers.f), flags_before_dec);
+
+    cpu.registers.f.zero = true;
+    cpu_step_n(&mut cpu, &mut bus, 8);
+    assert_eq!(cpu.registers.get_r16(CpuReg16::HL), 2);
+    assert!(cpu.registers.f.zero);
+}
+
+#[test]
+fn test_add_and_sub_immediates_do_not_use_carry_flag() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+    bus.rom[..4].copy_from_slice(&[0xC6, 0x01, 0xD6, 0x01]);
+    cpu.registers.a = 1;
+    cpu.registers.f.carry = true;
+
+    cpu_step_n(&mut cpu, &mut bus, 8);
+    assert_eq!(cpu.registers.a, 2);
+
+    cpu.registers.f.carry = true;
+    cpu_step_n(&mut cpu, &mut bus, 8);
+    assert_eq!(cpu.registers.a, 1);
+}
+
+#[test]
+fn test_ld_hl_sp_e8_uses_low_byte_for_carry_flags() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+    bus.rom[..2].copy_from_slice(&[0xF8, 0x01]);
+    cpu.registers.sp = 0x00FF;
+
+    cpu_step_n(&mut cpu, &mut bus, 12);
+
+    assert_eq!(cpu.registers.get_r16(CpuReg16::HL), 0x0100);
+    assert!(!cpu.registers.f.zero);
+    assert!(!cpu.registers.f.subtract);
+    assert!(cpu.registers.f.half_carry);
+    assert!(cpu.registers.f.carry);
+}
+
+#[test]
+fn test_ei_enables_interrupts_after_the_following_instruction() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+    bus.rom[..3].copy_from_slice(&[0xFB, 0x00, 0x00]);
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert!(!cpu.ime);
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert!(!cpu.ime);
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert!(cpu.ime);
+}
+
+#[test]
+fn test_halt_and_stop_enter_explicit_cpu_states() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+    bus.rom[0] = 0x76;
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.phase, CpuPhase::Halted);
+    assert_eq!(cpu.registers.pc, 1);
+
+    let mut cpu = Cpu::new();
+    bus.rom[..2].copy_from_slice(&[0x10, 0x00]);
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.phase, CpuPhase::Stopped);
+    assert_eq!(cpu.registers.pc, 2);
+}

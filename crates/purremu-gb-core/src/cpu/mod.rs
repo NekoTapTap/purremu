@@ -8,7 +8,9 @@ pub(crate) mod instructions;
 pub(crate) mod registers;
 
 use cpu_arithmetic::CpuArithmetic;
-use instructions::{CpuCbInstruction, CpuCbOperand, CpuCbOperation, CpuCondition, CpuInstruction};
+use instructions::{
+    CpuAluOperation, CpuCbInstruction, CpuCbOperand, CpuCbOperation, CpuCondition, CpuInstruction,
+};
 use registers::{CpuReg8, CpuReg16, CpuRegisters};
 
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -22,6 +24,8 @@ pub enum CpuPhase {
     FetchA16Low(CpuInstruction),
     FetchA16High(CpuInstruction, u8),
     FetchA16Mem(CpuInstruction, u16),
+    WriteAddrSpLow(u16),
+    WriteAddrSpHigh(u16),
     FetchR8(CpuInstruction),
     FetchCbOpcode,
     ReadCbHl(CpuCbOperation),
@@ -54,6 +58,9 @@ pub enum CpuPhase {
     IncrementR16(CpuReg16),
 
     CheckRetCondition(CpuCondition),
+
+    Halted,
+    Stopped,
 }
 
 pub struct Cpu {
@@ -62,6 +69,7 @@ pub struct Cpu {
     registers: CpuRegisters,
     instruction_set: [[CpuInstruction; 16]; 16],
     ime: bool, // Interrupt Master Enable flag
+    ime_enable_delay: u8,
 }
 
 impl Cpu {
@@ -72,6 +80,7 @@ impl Cpu {
             registers: CpuRegisters::new(),
             instruction_set: Self::initialize_instruction_set(),
             ime: false,
+            ime_enable_delay: 0,
         }
     }
 
@@ -130,14 +139,14 @@ impl Cpu {
             }
             CpuInstruction::AddAImm8 => {
                 let value = self.fetch8(bus);
-                let (result, flags) = self.registers.a.cpu_add(value, self.registers.f.carry);
+                let (result, flags) = self.registers.a.cpu_add(value, false);
                 self.registers.a = result;
                 self.registers.f = flags;
                 self.phase = CpuPhase::FetchOpcode;
             }
             CpuInstruction::SubAImm8 => {
                 let value = self.fetch8(bus);
-                let (result, flags) = self.registers.a.cpu_sub(value, self.registers.f.carry);
+                let (result, flags) = self.registers.a.cpu_sub(value, false);
                 self.registers.a = result;
                 self.registers.f = flags;
                 self.phase = CpuPhase::FetchOpcode;
@@ -282,6 +291,24 @@ impl Cpu {
         self.phase = CpuPhase::FetchOpcode;
     }
 
+    fn apply_alu_a(&mut self, operation: CpuAluOperation, value: u8) {
+        let (result, flags) = match operation {
+            CpuAluOperation::Add => self.registers.a.cpu_add(value, false),
+            CpuAluOperation::Adc => self.registers.a.cpu_add(value, self.registers.f.carry),
+            CpuAluOperation::Sub | CpuAluOperation::Cp => self.registers.a.cpu_sub(value, false),
+            CpuAluOperation::Sbc => self.registers.a.cpu_sub(value, self.registers.f.carry),
+            CpuAluOperation::And => self.registers.a.cpu_and(value),
+            CpuAluOperation::Xor => self.registers.a.cpu_xor(value),
+            CpuAluOperation::Or => self.registers.a.cpu_or(value),
+        };
+
+        if operation != CpuAluOperation::Cp {
+            self.registers.a = result;
+        }
+        self.registers.f = flags;
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
     fn fetch_imm16_low(&mut self, instruction: CpuInstruction, bus: &MemoryBus) {
         let low_byte = self.fetch8(bus);
         match instruction {
@@ -319,9 +346,11 @@ impl Cpu {
     fn fetch_r16(&mut self, instruction: CpuInstruction, bus: &mut MemoryBus) {
         match instruction {
             CpuInstruction::AddHlR16(src) => {
+                let zero = self.registers.f.zero;
                 let src_value = self.registers.get_r16(src);
                 let dest_value = self.registers.get_r16(CpuReg16::HL);
-                let (result, flags) = dest_value.cpu_add(src_value, false);
+                let (result, mut flags) = dest_value.cpu_add(src_value, false);
+                flags.zero = zero;
                 self.registers
                     .set_r16_high(CpuReg16::HL, (result >> 8) as u8);
                 self.registers.set_r16_low(CpuReg16::HL, result as u8);
@@ -362,16 +391,29 @@ impl Cpu {
             CpuInstruction::IncHlMem => {
                 let hl_value = self.registers.get_r16(CpuReg16::HL);
                 let value = self.read8(bus, hl_value);
-                let (result, flags) = value.cpu_inc();
+                let carry = self.registers.f.carry;
+                let (result, mut flags) = value.cpu_inc();
+                flags.carry = carry;
                 self.registers.f = flags;
                 self.phase = CpuPhase::WriteMem(hl_value, result);
             }
             CpuInstruction::DecHlMem => {
                 let hl_value = self.registers.get_r16(CpuReg16::HL);
                 let value = self.read8(bus, hl_value);
-                let (result, flags) = value.cpu_dec();
+                let carry = self.registers.f.carry;
+                let (result, mut flags) = value.cpu_dec();
+                flags.carry = carry;
                 self.registers.f = flags;
                 self.phase = CpuPhase::WriteMem(hl_value, result);
+            }
+            CpuInstruction::AluAHlMem(operation) => {
+                let hl_value = self.registers.get_r16(CpuReg16::HL);
+                let value = self.read8(bus, hl_value);
+                self.apply_alu_a(operation, value);
+            }
+            CpuInstruction::LdSpHl => {
+                self.registers.sp = self.registers.get_r16(CpuReg16::HL);
+                self.phase = CpuPhase::FetchOpcode;
             }
             _ => {
                 panic!("No such instruction: {:?}", instruction);
@@ -465,14 +507,14 @@ impl Cpu {
         let [sp_low, sp_high] = self.registers.sp.to_le_bytes();
         let (result_low, reg_low) = sp_low.cpu_add(raw_offset, false);
         let adjustment = if raw_offset & 0x80 != 0 { 0xFF } else { 0x00 };
-        let (result_high, reg_high) = sp_high.cpu_add(adjustment, reg_low.carry);
+        let (result_high, _) = sp_high.cpu_add(adjustment, reg_low.carry);
 
         // There is no signed types in the Gameboy CPU,
         // so carry and half-carry flags still calculated as if the offset was unsigned.
         self.registers.f.zero = false;
         self.registers.f.subtract = false;
         self.registers.f.half_carry = reg_low.half_carry;
-        self.registers.f.carry = reg_high.carry;
+        self.registers.f.carry = reg_low.carry;
         self.registers
             .set_r16(CpuReg16::HL, u16::from_le_bytes([result_low, result_high]));
         self.phase = CpuPhase::FetchOpcode;
@@ -503,7 +545,8 @@ impl Cpu {
             | CpuInstruction::CallNcA16
             | CpuInstruction::CallNzA16
             | CpuInstruction::LdAAddr
-            | CpuInstruction::LdAddrA => {
+            | CpuInstruction::LdAddrA
+            | CpuInstruction::LdAddrSp => {
                 self.phase = CpuPhase::FetchA16High(instruction, low_byte);
             }
             _ => {
@@ -582,10 +625,23 @@ impl Cpu {
             CpuInstruction::LdAAddr | CpuInstruction::LdAddrA => {
                 self.phase = CpuPhase::FetchA16Mem(instruction, addr);
             }
+            CpuInstruction::LdAddrSp => {
+                self.phase = CpuPhase::WriteAddrSpLow(addr);
+            }
             _ => {
                 panic!("No such instruction: {:?}", instruction);
             }
         }
+    }
+
+    fn write_addr_sp_low(&mut self, addr: u16, bus: &mut MemoryBus) {
+        bus.write8(addr, self.registers.sp as u8);
+        self.phase = CpuPhase::WriteAddrSpHigh(addr.wrapping_add(1));
+    }
+
+    fn write_addr_sp_high(&mut self, addr: u16, bus: &mut MemoryBus) {
+        bus.write8(addr, (self.registers.sp >> 8) as u8);
+        self.phase = CpuPhase::FetchOpcode;
     }
 
     fn apply_relative_jump(&mut self, offset: i8) {
@@ -658,14 +714,15 @@ impl Cpu {
             CpuCbOperation::Sra => ((value >> 1) | (value & 0x80), value & 0x01 != 0), // Shift right but keep the sign, example: 1010_0110 -> 1101_0011
             CpuCbOperation::Swap => (value.rotate_left(4), false), // Example: 0xAB -> 0xBA
             CpuCbOperation::Srl => (value >> 1, value & 0x01 != 0), // Shift right logical, example: 0010_0110 -> 0001_0011
-            CpuCbOperation::Bit(bit) => { // Test the specified bit and set flags accordingly
+            CpuCbOperation::Bit(bit) => {
+                // Test the specified bit and set flags accordingly
                 self.registers.f.zero = value & (1u8 << bit) == 0;
                 self.registers.f.subtract = false;
                 self.registers.f.half_carry = true;
                 return None;
             }
             CpuCbOperation::Res(bit) => return Some(value & !(1u8 << bit)), // Reset the specified bit to 0
-            CpuCbOperation::Set(bit) => return Some(value | (1u8 << bit)),  // Set the specified bit to 1
+            CpuCbOperation::Set(bit) => return Some(value | (1u8 << bit)), // Set the specified bit to 1
         };
 
         self.registers.f.zero = result == 0;
@@ -675,7 +732,63 @@ impl Cpu {
         Some(result)
     }
 
+    fn rotate_a(&mut self, operation: CpuCbOperation) {
+        let value = self.registers.a;
+        let (result, carry) = match operation {
+            CpuCbOperation::Rlc => (value.rotate_left(1), value & 0x80 != 0),
+            CpuCbOperation::Rrc => (value.rotate_right(1), value & 0x01 != 0),
+            CpuCbOperation::Rl => (
+                (value << 1) | u8::from(self.registers.f.carry),
+                value & 0x80 != 0,
+            ),
+            CpuCbOperation::Rr => (
+                (value >> 1) | (u8::from(self.registers.f.carry) << 7),
+                value & 0x01 != 0,
+            ),
+            _ => unreachable!(),
+        };
+
+        self.registers.a = result;
+        self.registers.f.zero = false;
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = false;
+        self.registers.f.carry = carry;
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
+    fn decimal_adjust_a(&mut self) {
+        let mut adjustment = 0;
+        let mut carry = self.registers.f.carry;
+
+        if self.registers.f.half_carry
+            || (!self.registers.f.subtract && self.registers.a & 0x0F > 9)
+        {
+            adjustment |= 0x06;
+        }
+        if self.registers.f.carry || (!self.registers.f.subtract && self.registers.a > 0x99) {
+            adjustment |= 0x60;
+            carry = true;
+        }
+
+        self.registers.a = if self.registers.f.subtract {
+            self.registers.a.wrapping_sub(adjustment)
+        } else {
+            self.registers.a.wrapping_add(adjustment)
+        };
+        self.registers.f.zero = self.registers.a == 0;
+        self.registers.f.half_carry = false;
+        self.registers.f.carry = carry;
+        self.phase = CpuPhase::FetchOpcode;
+    }
+
     fn phase_fetch_opcode(&mut self, bus: &MemoryBus) {
+        if self.ime_enable_delay != 0 {
+            self.ime_enable_delay -= 1;
+            if self.ime_enable_delay == 0 {
+                self.ime = true;
+            }
+        }
+
         let opcode = self.fetch8(bus);
 
         let instruction = self.decode_instruction(opcode);
@@ -725,6 +838,13 @@ impl Cpu {
             CpuInstruction::XorAR8(register) => {
                 self.phase_xor_a_r8(register);
             }
+            CpuInstruction::CpAR8(register) => {
+                let value = self.registers.get_r8(register);
+                self.apply_alu_a(CpuAluOperation::Cp, value);
+            }
+            CpuInstruction::LdhCA | CpuInstruction::LdhAC => {
+                self.phase = CpuPhase::FetchR8(instruction);
+            }
             CpuInstruction::LdAR16mem(_)
             | CpuInstruction::LdR16memA(_)
             | CpuInstruction::LdHlMemImm8
@@ -735,7 +855,9 @@ impl Cpu {
             | CpuInstruction::LdHlIncMemA
             | CpuInstruction::LdHlDecMemA
             | CpuInstruction::IncHlMem
-            | CpuInstruction::DecHlMem => {
+            | CpuInstruction::DecHlMem
+            | CpuInstruction::AluAHlMem(_)
+            | CpuInstruction::LdSpHl => {
                 self.phase = CpuPhase::FetchR16(instruction);
             }
             CpuInstruction::JrNzE8
@@ -758,7 +880,8 @@ impl Cpu {
             | CpuInstruction::CallNcA16
             | CpuInstruction::CallCA16
             | CpuInstruction::LdAAddr
-            | CpuInstruction::LdAddrA => {
+            | CpuInstruction::LdAddrA
+            | CpuInstruction::LdAddrSp => {
                 self.phase = CpuPhase::FetchA16Low(instruction);
             }
             CpuInstruction::JpHl => {
@@ -771,10 +894,11 @@ impl Cpu {
             }
             CpuInstruction::DI => {
                 self.ime = false;
+                self.ime_enable_delay = 0;
                 self.phase = CpuPhase::FetchOpcode;
             }
             CpuInstruction::EI => {
-                self.ime = true;
+                self.ime_enable_delay = 2;
                 self.phase = CpuPhase::FetchOpcode;
             }
             CpuInstruction::Ret(CpuCondition::None) => {
@@ -810,7 +934,37 @@ impl Cpu {
             CpuInstruction::PrefixCb => {
                 self.phase = CpuPhase::FetchCbOpcode;
             }
-            _ => {
+            CpuInstruction::Rlca => self.rotate_a(CpuCbOperation::Rlc),
+            CpuInstruction::Rrca => self.rotate_a(CpuCbOperation::Rrc),
+            CpuInstruction::Rla => self.rotate_a(CpuCbOperation::Rl),
+            CpuInstruction::Rra => self.rotate_a(CpuCbOperation::Rr),
+            CpuInstruction::Daa => self.decimal_adjust_a(),
+            CpuInstruction::Cpl => {
+                self.registers.a = !self.registers.a;
+                self.registers.f.subtract = true;
+                self.registers.f.half_carry = true;
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::Scf => {
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = true;
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::Ccf => {
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = !self.registers.f.carry;
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuInstruction::Halt => {
+                self.phase = CpuPhase::Halted;
+            }
+            CpuInstruction::Stop => {
+                self.fetch8(bus);
+                self.phase = CpuPhase::Stopped;
+            }
+            CpuInstruction::Illegal => {
                 panic!("No such instruction: {:?} (0X{:02X})", instruction, opcode);
             }
         }
@@ -822,13 +976,15 @@ impl Cpu {
     }
 
     fn decrement_sp(&mut self, register: CpuReg16) {
-        self.registers.sp -= 1;
+        self.registers.sp = self.registers.sp.wrapping_sub(1);
         self.phase = CpuPhase::PushR16High(register);
     }
 
     fn decrement_r8(&mut self, register: CpuReg8) {
         let value = self.registers.get_r8(register);
-        let (result, flags) = value.cpu_sub(1, false);
+        let carry = self.registers.f.carry;
+        let (result, mut flags) = value.cpu_sub(1, false);
+        flags.carry = carry;
         self.registers.set_r8(register, result);
         self.registers.f = flags;
         self.phase = CpuPhase::FetchOpcode;
@@ -836,7 +992,9 @@ impl Cpu {
 
     fn increment_r8(&mut self, register: CpuReg8) {
         let value = self.registers.get_r8(register);
-        let (result, flags) = value.cpu_add(1, false);
+        let carry = self.registers.f.carry;
+        let (result, mut flags) = value.cpu_add(1, false);
+        flags.carry = carry;
         self.registers.set_r8(register, result);
         self.registers.f = flags;
         self.phase = CpuPhase::FetchOpcode;
@@ -844,19 +1002,13 @@ impl Cpu {
 
     fn increment_r16(&mut self, register: CpuReg16) {
         let value = self.registers.get_r16(register);
-        let (result, flags) = value.cpu_add(1, false);
-        self.registers.set_r16_high(register, (result >> 8) as u8);
-        self.registers.set_r16_low(register, result as u8);
-        self.registers.f = flags;
+        self.registers.set_r16(register, value.wrapping_add(1));
         self.phase = CpuPhase::FetchOpcode;
     }
 
     fn decrement_r16(&mut self, register: CpuReg16) {
         let value = self.registers.get_r16(register);
-        let (result, flags) = value.cpu_sub(1, false);
-        self.registers.set_r16_high(register, (result >> 8) as u8);
-        self.registers.set_r16_low(register, result as u8);
-        self.registers.f = flags;
+        self.registers.set_r16(register, value.wrapping_sub(1));
         self.phase = CpuPhase::FetchOpcode;
     }
 
@@ -870,7 +1022,7 @@ impl Cpu {
             | CpuInstruction::Rst(_) => {
                 let high_byte = (self.registers.pc >> 8) as u8;
                 bus.write8(self.registers.sp, high_byte);
-                self.registers.sp -= 1;
+                self.registers.sp = self.registers.sp.wrapping_sub(1);
                 self.phase = CpuPhase::WriteSpMemLow(instruction, addr);
             }
             _ => {
@@ -902,7 +1054,7 @@ impl Cpu {
         match instruction {
             CpuInstruction::Ret(_) | CpuInstruction::RetI => {
                 let low_byte = self.read8(bus, self.registers.sp);
-                self.registers.sp += 1;
+                self.registers.sp = self.registers.sp.wrapping_add(1);
                 self.phase = CpuPhase::ReadSpHigh(instruction, low_byte);
             }
             _ => {
@@ -913,7 +1065,7 @@ impl Cpu {
 
     fn read_sp_high(&mut self, instruction: CpuInstruction, low_byte: u8, bus: &MemoryBus) {
         let high_byte = self.read8(bus, self.registers.sp);
-        self.registers.sp += 1;
+        self.registers.sp = self.registers.sp.wrapping_add(1);
 
         let addr = ((high_byte as u16) << 8) | (low_byte as u16);
 
@@ -930,7 +1082,7 @@ impl Cpu {
     fn push_r16_high(&mut self, register: CpuReg16, bus: &mut MemoryBus) {
         let value = self.registers.get_r16(register);
         bus.write8(self.registers.sp, (value >> 8) as u8);
-        self.registers.sp -= 1;
+        self.registers.sp = self.registers.sp.wrapping_sub(1);
         self.phase = CpuPhase::PushR16Low(register);
     }
 
@@ -942,14 +1094,14 @@ impl Cpu {
 
     fn pop_r16_low(&mut self, register: CpuReg16, bus: &mut MemoryBus) {
         let low_byte = self.read8(bus, self.registers.sp);
-        self.registers.sp += 1;
+        self.registers.sp = self.registers.sp.wrapping_add(1);
         self.registers.set_r16_low(register, low_byte);
         self.phase = CpuPhase::PopR16High(register);
     }
 
     fn pop_r16_high(&mut self, register: CpuReg16, bus: &mut MemoryBus) {
         let high_byte = self.read8(bus, self.registers.sp);
-        self.registers.sp += 1;
+        self.registers.sp = self.registers.sp.wrapping_add(1);
         self.registers.set_r16_high(register, high_byte);
         self.phase = CpuPhase::FetchOpcode;
     }
@@ -1010,6 +1162,7 @@ impl Cpu {
             CpuPhase::ApplyAbsoluteJumpEnableInterrupts(addr) => {
                 self.apply_absolute_jump(addr);
                 self.ime = true;
+                self.ime_enable_delay = 0;
             }
             CpuPhase::PushR16High(register) => self.push_r16_high(register, bus),
             CpuPhase::PushR16Low(register) => self.push_r16_low(register, bus),
@@ -1017,6 +1170,8 @@ impl Cpu {
             CpuPhase::PopR16Low(register) => self.pop_r16_low(register, bus),
             CpuPhase::PopR16High(register) => self.pop_r16_high(register, bus),
             CpuPhase::FetchA16Mem(instruction, addr) => self.fetch_a16_mem(instruction, addr, bus),
+            CpuPhase::WriteAddrSpLow(addr) => self.write_addr_sp_low(addr, bus),
+            CpuPhase::WriteAddrSpHigh(addr) => self.write_addr_sp_high(addr, bus),
             CpuPhase::FetchR8(instruction) => self.phase_fetch_r8(instruction, bus),
             CpuPhase::FetchCbOpcode => self.fetch_cb_opcode(bus),
             CpuPhase::ReadCbHl(operation) => self.read_cb_hl(operation, bus),
@@ -1026,6 +1181,7 @@ impl Cpu {
             }
             CpuPhase::LdHlSpE8(raw_offset) => self.ld_hl_sp_e8(raw_offset),
             CpuPhase::WriteMem(addr, value) => self.write_mem(bus, addr, value),
+            CpuPhase::Halted | CpuPhase::Stopped => {}
         }
     }
 
