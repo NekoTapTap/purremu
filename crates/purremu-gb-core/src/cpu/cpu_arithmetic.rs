@@ -1,6 +1,5 @@
 use crate::cpu::registers::CpuFlagsReg;
 
-
 pub(crate) trait CpuArithmetic
 where
     Self: Sized,

@@ -1,6 +1,6 @@
 use strum::IntoEnumIterator;
 
-use crate::cpu::instructions::CpuCondition;
+use crate::cpu::instructions::{CpuCbInstruction, CpuCbOperand, CpuCbOperation, CpuCondition};
 use crate::cpu::{Cpu, CpuArithmetic, CpuInstruction, CpuPhase, CpuReg8, CpuReg16};
 use crate::memory_bus::MemoryBus;
 
@@ -1732,4 +1732,150 @@ fn test_rst() {
         assert_eq!(cpu.registers.pc, addr);
         assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     }
+}
+
+#[test]
+fn test_cb_decoder_covers_all_opcodes() {
+    for opcode in u8::MIN..=u8::MAX {
+        let instruction = CpuCbInstruction::decode(opcode);
+        let expected_operand = match opcode & 0b111 {
+            0 => CpuCbOperand::Register(CpuReg8::B),
+            1 => CpuCbOperand::Register(CpuReg8::C),
+            2 => CpuCbOperand::Register(CpuReg8::D),
+            3 => CpuCbOperand::Register(CpuReg8::E),
+            4 => CpuCbOperand::Register(CpuReg8::H),
+            5 => CpuCbOperand::Register(CpuReg8::L),
+            6 => CpuCbOperand::HlMem,
+            7 => CpuCbOperand::Register(CpuReg8::A),
+            _ => unreachable!(),
+        };
+        let operation_index = (opcode >> 3) & 0b111;
+        let expected_operation = match opcode >> 6 {
+            0 => [
+                CpuCbOperation::Rlc,
+                CpuCbOperation::Rrc,
+                CpuCbOperation::Rl,
+                CpuCbOperation::Rr,
+                CpuCbOperation::Sla,
+                CpuCbOperation::Sra,
+                CpuCbOperation::Swap,
+                CpuCbOperation::Srl,
+            ][operation_index as usize],
+            1 => CpuCbOperation::Bit(operation_index),
+            2 => CpuCbOperation::Res(operation_index),
+            3 => CpuCbOperation::Set(operation_index),
+            _ => unreachable!(),
+        };
+
+        assert_eq!(
+            instruction.operand, expected_operand,
+            "opcode CB {opcode:02X}"
+        );
+        assert_eq!(
+            instruction.operation, expected_operation,
+            "opcode CB {opcode:02X}"
+        );
+    }
+}
+
+#[test]
+fn test_cb_rotate_and_shift_registers() {
+    let cases = [
+        (0x00, 0x81, false, 0x03, false, true),
+        (0x08, 0x01, false, 0x80, false, true),
+        (0x10, 0x80, true, 0x01, false, true),
+        (0x18, 0x01, true, 0x80, false, true),
+        (0x20, 0x81, false, 0x02, false, true),
+        (0x28, 0x81, false, 0xC0, false, true),
+        (0x30, 0xF0, true, 0x0F, false, false),
+        (0x38, 0x01, false, 0x00, true, true),
+    ];
+
+    for (opcode, input, input_carry, expected, zero, carry) in cases {
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
+        let mut cpu = Cpu::new();
+        bus.rom[0] = 0xCB;
+        bus.rom[1] = opcode;
+        cpu.registers.b = input;
+        cpu.registers.f.carry = input_carry;
+
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(cpu.phase, CpuPhase::FetchCbOpcode);
+        assert_eq!(cpu.registers.pc, 1);
+
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+        assert_eq!(cpu.registers.pc, 2);
+        assert_eq!(cpu.registers.b, expected, "opcode CB {opcode:02X}");
+        assert_eq!(cpu.registers.f.zero, zero, "opcode CB {opcode:02X}");
+        assert!(!cpu.registers.f.subtract, "opcode CB {opcode:02X}");
+        assert!(!cpu.registers.f.half_carry, "opcode CB {opcode:02X}");
+        assert_eq!(cpu.registers.f.carry, carry, "opcode CB {opcode:02X}");
+    }
+}
+
+#[test]
+fn test_cb_bit_res_and_set_register_flags() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+    bus.rom[0] = 0xCB;
+    bus.rom[1] = 0x7F; // BIT 7,A
+    cpu.registers.a = 0x80;
+    cpu.registers.f.carry = true;
+
+    cpu_step_n(&mut cpu, &mut bus, 8);
+    assert_eq!(cpu.registers.a, 0x80);
+    assert!(!cpu.registers.f.zero);
+    assert!(!cpu.registers.f.subtract);
+    assert!(cpu.registers.f.half_carry);
+    assert!(cpu.registers.f.carry);
+
+    bus.rom[2] = 0xCB;
+    bus.rom[3] = 0xBF; // RES 7,A
+    cpu_step_n(&mut cpu, &mut bus, 8);
+    assert_eq!(cpu.registers.a, 0x00);
+    assert!(!cpu.registers.f.zero);
+    assert!(!cpu.registers.f.subtract);
+    assert!(cpu.registers.f.half_carry);
+    assert!(cpu.registers.f.carry);
+
+    bus.rom[4] = 0xCB;
+    bus.rom[5] = 0xC7; // SET 0,A
+    cpu_step_n(&mut cpu, &mut bus, 8);
+    assert_eq!(cpu.registers.a, 0x01);
+    assert!(!cpu.registers.f.zero);
+    assert!(!cpu.registers.f.subtract);
+    assert!(cpu.registers.f.half_carry);
+    assert!(cpu.registers.f.carry);
+}
+
+#[test]
+fn test_cb_hl_memory_timing() {
+    let addr = 0xC000;
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new();
+    cpu.registers.set_r16(CpuReg16::HL, addr);
+    bus.write8(addr, 0x01);
+    bus.rom[0] = 0xCB;
+    bus.rom[1] = 0x46; // BIT 0,[HL]
+
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.phase, CpuPhase::FetchCbOpcode);
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.phase, CpuPhase::ReadCbHl(CpuCbOperation::Bit(0)));
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+    assert_eq!(bus.read8(addr), 0x01);
+    assert!(!cpu.registers.f.zero);
+
+    bus.rom[2] = 0xCB;
+    bus.rom[3] = 0x86; // RES 0,[HL]
+    cpu_step_n(&mut cpu, &mut bus, 8);
+    assert_eq!(cpu.phase, CpuPhase::ReadCbHl(CpuCbOperation::Res(0)));
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.phase, CpuPhase::WriteMem(addr, 0x00));
+    assert_eq!(bus.read8(addr), 0x01);
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+    assert_eq!(bus.read8(addr), 0x00);
 }

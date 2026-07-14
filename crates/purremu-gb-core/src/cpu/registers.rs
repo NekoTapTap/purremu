@@ -61,7 +61,6 @@ impl From<&CpuFlagsReg> for u8 {
     }
 }
 
-
 #[rustfmt::skip]
 pub(crate) struct CpuRegisters {
     pub(crate) pc: u16,

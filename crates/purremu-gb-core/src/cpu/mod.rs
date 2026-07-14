@@ -8,7 +8,7 @@ pub(crate) mod instructions;
 pub(crate) mod registers;
 
 use cpu_arithmetic::CpuArithmetic;
-use instructions::{CpuCondition, CpuInstruction};
+use instructions::{CpuCbInstruction, CpuCbOperand, CpuCbOperation, CpuCondition, CpuInstruction};
 use registers::{CpuReg8, CpuReg16, CpuRegisters};
 
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -23,6 +23,8 @@ pub enum CpuPhase {
     FetchA16High(CpuInstruction, u8),
     FetchA16Mem(CpuInstruction, u16),
     FetchR8(CpuInstruction),
+    FetchCbOpcode,
+    ReadCbHl(CpuCbOperation),
     ApplyRelativeJump(i8),
     ApplyAbsoluteJump(u16),
     ApplyAbsoluteJumpEnableInterrupts(u16),
@@ -471,7 +473,8 @@ impl Cpu {
         self.registers.f.subtract = false;
         self.registers.f.half_carry = reg_low.half_carry;
         self.registers.f.carry = reg_high.carry;
-        self.registers.set_r16(CpuReg16::HL, u16::from_le_bytes([result_low, result_high]));
+        self.registers
+            .set_r16(CpuReg16::HL, u16::from_le_bytes([result_low, result_high]));
         self.phase = CpuPhase::FetchOpcode;
     }
 
@@ -612,6 +615,66 @@ impl Cpu {
         self.phase = CpuPhase::ReadSpLow(CpuInstruction::Ret(condition));
     }
 
+    fn fetch_cb_opcode(&mut self, bus: &MemoryBus) {
+        let instruction = CpuCbInstruction::decode(self.fetch8(bus));
+        match instruction.operand {
+            CpuCbOperand::Register(register) => {
+                let value = self.registers.get_r8(register);
+                if let Some(result) = self.apply_cb_operation(instruction.operation, value) {
+                    self.registers.set_r8(register, result);
+                }
+                self.phase = CpuPhase::FetchOpcode;
+            }
+            CpuCbOperand::HlMem => {
+                self.phase = CpuPhase::ReadCbHl(instruction.operation);
+            }
+        }
+    }
+
+    fn read_cb_hl(&mut self, operation: CpuCbOperation, bus: &MemoryBus) {
+        let addr = self.registers.get_r16(CpuReg16::HL);
+        let value = self.read8(bus, addr);
+        let Some(result) = self.apply_cb_operation(operation, value) else {
+            self.phase = CpuPhase::FetchOpcode;
+            return;
+        };
+
+        self.phase = CpuPhase::WriteMem(addr, result);
+    }
+
+    fn apply_cb_operation(&mut self, operation: CpuCbOperation, value: u8) -> Option<u8> {
+        let (result, carry) = match operation {
+            CpuCbOperation::Rlc => (value.rotate_left(1), value & 0x80 != 0), // Rotate left through carry, example: 1010_0110 -> 0100_1101
+            CpuCbOperation::Rrc => (value.rotate_right(1), value & 0x01 != 0), // Rotate right through carry, example: 1010_0110 -> 0101_0011
+            CpuCbOperation::Rl => (
+                (value << 1) | u8::from(self.registers.f.carry),
+                value & 0x80 != 0,
+            ),
+            CpuCbOperation::Rr => (
+                (value >> 1) | (u8::from(self.registers.f.carry) << 7),
+                value & 0x01 != 0,
+            ),
+            CpuCbOperation::Sla => (value << 1, value & 0x80 != 0),
+            CpuCbOperation::Sra => ((value >> 1) | (value & 0x80), value & 0x01 != 0), // Shift right but keep the sign, example: 1010_0110 -> 1101_0011
+            CpuCbOperation::Swap => (value.rotate_left(4), false), // Example: 0xAB -> 0xBA
+            CpuCbOperation::Srl => (value >> 1, value & 0x01 != 0), // Shift right logical, example: 0010_0110 -> 0001_0011
+            CpuCbOperation::Bit(bit) => { // Test the specified bit and set flags accordingly
+                self.registers.f.zero = value & (1u8 << bit) == 0;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = true;
+                return None;
+            }
+            CpuCbOperation::Res(bit) => return Some(value & !(1u8 << bit)), // Reset the specified bit to 0
+            CpuCbOperation::Set(bit) => return Some(value | (1u8 << bit)),  // Set the specified bit to 1
+        };
+
+        self.registers.f.zero = result == 0;
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = false;
+        self.registers.f.carry = carry;
+        Some(result)
+    }
+
     fn phase_fetch_opcode(&mut self, bus: &MemoryBus) {
         let opcode = self.fetch8(bus);
 
@@ -743,6 +806,9 @@ impl Cpu {
             }
             CpuInstruction::Rst(addr) => {
                 self.phase = CpuPhase::DecrementSpForWrite(instruction, addr);
+            }
+            CpuInstruction::PrefixCb => {
+                self.phase = CpuPhase::FetchCbOpcode;
             }
             _ => {
                 panic!("No such instruction: {:?} (0X{:02X})", instruction, opcode);
@@ -952,6 +1018,8 @@ impl Cpu {
             CpuPhase::PopR16High(register) => self.pop_r16_high(register, bus),
             CpuPhase::FetchA16Mem(instruction, addr) => self.fetch_a16_mem(instruction, addr, bus),
             CpuPhase::FetchR8(instruction) => self.phase_fetch_r8(instruction, bus),
+            CpuPhase::FetchCbOpcode => self.fetch_cb_opcode(bus),
+            CpuPhase::ReadCbHl(operation) => self.read_cb_hl(operation, bus),
             CpuPhase::AddSpE8Low(raw_offset) => self.add_sp_e8_low(raw_offset),
             CpuPhase::AddSpE8High(result_low, adjustment) => {
                 self.add_sp_e8_high(result_low, adjustment)
