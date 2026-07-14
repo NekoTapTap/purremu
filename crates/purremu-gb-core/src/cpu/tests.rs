@@ -1469,7 +1469,9 @@ fn test_pop_r16() {
             cpu.registers.get_r16(register) & 0x00FF,
             r16_value & 0x00FF,
             "test failed for POP {:?}: expected low byte of r16={:02X} but got {:02X}",
-            register, r16_value & 0x00FF, cpu.registers.get_r16(register) & 0x00FF
+            register,
+            r16_value & 0x00FF,
+            cpu.registers.get_r16(register) & 0x00FF
         );
 
         // M3: Read high byte from [SP], SP += 1, set r16 to the value read
@@ -1490,7 +1492,9 @@ fn test_pop_r16() {
             cpu.registers.get_r16(register),
             r16_value,
             "test failed for POP {:?}: expected r16={:04X} but got r16={:04X}",
-            register, r16_value, cpu.registers.get_r16(register)
+            register,
+            r16_value,
+            cpu.registers.get_r16(register)
         );
     }
 }
@@ -1643,4 +1647,42 @@ fn test_add_sp_e8() {
     assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
     assert_eq!(cpu.registers.pc, 0x0102);
     assert_eq!(cpu.registers.sp, 0xE000);
+}
+
+#[test]
+fn test_rst() {
+    let addresses = [0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38];
+
+    for addr in addresses {
+        let instruction = CpuInstruction::Rst(addr);
+        let mut bus = MemoryBus::new(vec![0; 0x8000]);
+        let mut cpu = Cpu::new_post_boot();
+        cpu.registers.sp = 0xFFFC;
+        bus.rom[0x0100] = cpu.encode_instruction(CpuInstruction::Rst(addr));
+
+        // M1: Fetch opcode
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(cpu.registers.pc, 0x0101);
+        assert_eq!(cpu.phase, CpuPhase::DecrementSpForWrite(instruction, addr));
+
+        // M2: Decrement SP
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(cpu.registers.pc, 0x0101);
+        assert_eq!(cpu.registers.sp, 0xFFFB);
+        assert_eq!(cpu.phase, CpuPhase::WriteSpMemHigh(instruction, addr));
+
+        // M3: Write high byte of return address to [SP]
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(cpu.registers.pc, 0x0101);
+        assert_eq!(cpu.registers.sp, 0xFFFA);
+        assert_eq!(bus.read8(0xFFFB), 0x01);
+        assert_eq!(cpu.phase, CpuPhase::WriteSpMemLow(instruction, addr));
+
+        // M4: Write low byte of return address to [SP], set PC to addr
+        cpu_step_n(&mut cpu, &mut bus, 4);
+        assert_eq!(cpu.registers.sp, 0xFFFA);
+        assert_eq!(bus.read8(0xFFFA), 0x01);
+        assert_eq!(cpu.registers.pc, addr);
+        assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+    }
 }

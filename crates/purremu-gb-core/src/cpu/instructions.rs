@@ -84,6 +84,8 @@ pub(crate) enum CpuInstruction {
     CallNcA16,
     CallCA16,
 
+    Rst(u16), // quick call to a fixed address, save rom size and time.
+
     DI,
     EI,
 
@@ -105,7 +107,7 @@ impl Cpu {
     /* 0x */[Nop        , LdR16Imm16(BC), LdR16memA(BC), IncR16(BC), IncR8(B)   , DecR8(B)   , LdR8Imm8(B), NoImpl     , NoImpl     , AddHlR16(BC), LdAR16mem(BC), DecR16(BC), IncR8(C)    , DecR8(C)   , LdR8Imm8(C), NoImpl     ],
     /* 1x */[NoImpl     , LdR16Imm16(DE), LdR16memA(DE), IncR16(DE), IncR8(D)   , DecR8(D)   , LdR8Imm8(D), NoImpl     , JrE8       , AddHlR16(DE), LdAR16mem(DE), DecR16(DE), IncR8(E)    , DecR8(E)   , LdR8Imm8(E), NoImpl     ],
     /* 2x */[JrNzE8     , LdR16Imm16(HL), LdR16memA(HL), IncR16(HL), IncR8(H)   , DecR8(H)   , LdR8Imm8(H), NoImpl     , JrZE8      , AddHlR16(HL), LdAR16mem(HL), DecR16(HL), IncR8(L)    , DecR8(L)   , LdR8Imm8(L), NoImpl     ],
-    /* 3x */[JrNcE8     , LdSpImm16     , NoImpl        , NoImpl     , NoImpl     , NoImpl     , LdHlMemImm8, NoImpl     , JrCE8      , NoImpl      , NoImpl       , NoImpl    , IncR8(A)    , DecR8(A)   , LdR8Imm8(A), NoImpl     ],
+    /* 3x */[JrNcE8     , LdSpImm16     , NoImpl       , NoImpl    , NoImpl     , NoImpl     , LdHlMemImm8, NoImpl     , JrCE8      , NoImpl      , NoImpl       , NoImpl    , IncR8(A)    , DecR8(A)   , LdR8Imm8(A), NoImpl     ],
 
     /* 4x */[LdR8R8(B,B), LdR8R8(B,C)  , LdR8R8(B,D)   , LdR8R8(B,E), LdR8R8(B,H), LdR8R8(B,L), NoImpl   , LdR8R8(B,A)  , LdR8R8(C,B), LdR8R8(C,C) , LdR8R8(C,D)  , LdR8R8(C,E), LdR8R8(C,H), LdR8R8(C,L), NoImpl     , LdR8R8(C,A)],
     /* 5x */[LdR8R8(D,B), LdR8R8(D,C)  , LdR8R8(D,D)   , LdR8R8(D,E), LdR8R8(D,H), LdR8R8(D,L), NoImpl   , LdR8R8(D,A)  , LdR8R8(E,B), LdR8R8(E,C) , LdR8R8(E,D)  , LdR8R8(E,E), LdR8R8(E,H), LdR8R8(E,L), NoImpl     , LdR8R8(E,A)],
@@ -117,10 +119,10 @@ impl Cpu {
     /* Ax */[AndAR8(B)  , AndAR8(C)    , AndAR8(D)     , AndAR8(E)  , AndAR8(H)  , AndAR8(L)  , NoImpl   , AndAR8(A)   , XorAR8(B)  , XorAR8(C)    , XorAR8(D)    , XorAR8(E)  , XorAR8(H)  , XorAR8(L)  , XorAHlMem  , XorAR8(A)  ],
     /* Bx */[OrAR8(B)   , OrAR8(C)     , OrAR8(D)      , OrAR8(E)   , OrAR8(H)   , OrAR8(L)   , NoImpl   , OrAR8(A)    , CpAR8(B)   , CpAR8(C)     , CpAR8(D)     , CpAR8(E)   , CpAR8(H)   , CpAR8(L)   , NoImpl     , CpAR8(A)   ],
 
-    /* Cx */[Ret(NZ)    , PopR16(BC)   , JpNzA16       , JpA16      , CallNzA16  , PushR16(BC), AddAImm8 , NoImpl      , Ret(Z)     , Ret(None)     , JpZA16      , NoImpl     , CallZA16   , CallA16    , AdcAImm8   , NoImpl     ],
-    /* Dx */[Ret(NC)    , PopR16(DE)   , JpNcA16       , Illegal    , CallNcA16  , PushR16(DE), SubAImm8 , NoImpl      , Ret(CondC) , RetI          , JpCA16      , Illegal    , CallCA16   , Illegal    , SbcAImm8   , NoImpl     ],
-    /* Ex */[LdhA8A     , PopR16(HL)   , LdhCA        , Illegal    , Illegal    , PushR16(HL), AndAImm8 , NoImpl       , AddSpE8    , JpHl          , LdAddrA     , Illegal    , Illegal    , Illegal    , XorAImm8   , NoImpl     ],
-    /* Fx */[LdhAA8     , PopAF        , LdhAC        , DI         , Illegal    , PushAF     , OrAImm8  , NoImpl       , LdHlSpE8   , NoImpl        , LdAAddr     , EI         , Illegal    , Illegal    , CpAImm8    , NoImpl     ],
+    /* Cx */[Ret(NZ)    , PopR16(BC)   , JpNzA16       , JpA16      , CallNzA16  , PushR16(BC), AddAImm8 , Rst(0x00)   , Ret(Z)     , Ret(None)     , JpZA16      , NoImpl     , CallZA16   , CallA16    , AdcAImm8   , Rst(0x08)  ],
+    /* Dx */[Ret(NC)    , PopR16(DE)   , JpNcA16       , Illegal    , CallNcA16  , PushR16(DE), SubAImm8 , Rst(0x10)   , Ret(CondC) , RetI          , JpCA16      , Illegal    , CallCA16   , Illegal    , SbcAImm8   , Rst(0x18)  ],
+    /* Ex */[LdhA8A     , PopR16(HL)   , LdhCA         , Illegal    , Illegal    , PushR16(HL), AndAImm8 , Rst(0x20)   , AddSpE8    , JpHl          , LdAddrA     , Illegal    , Illegal    , Illegal    , XorAImm8   , Rst(0x28)  ],
+    /* Fx */[LdhAA8     , PopAF        , LdhAC         , DI         , Illegal    , PushAF     , OrAImm8  , Rst(0x30)   , LdHlSpE8   , NoImpl        , LdAAddr     , EI         , Illegal    , Illegal    , CpAImm8    , Rst(0x38)  ],
         ]
     }
 }

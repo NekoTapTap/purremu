@@ -636,6 +636,9 @@ impl Cpu {
             CpuInstruction::PopR16(r16) => {
                 self.phase = CpuPhase::PopR16Low(r16);
             }
+            CpuInstruction::Rst(addr) => {
+                self.phase = CpuPhase::DecrementSpForWrite(instruction, addr);
+            }
             _ => {
                 panic!("No such instruction: {:?} (0X{:02X})", instruction, opcode);
             }
@@ -686,13 +689,14 @@ impl Cpu {
         self.phase = CpuPhase::FetchOpcode;
     }
 
-    fn set_sp_high(&mut self, instruction: CpuInstruction, addr: u16, bus: &mut MemoryBus) {
+    fn write_sp_high(&mut self, instruction: CpuInstruction, addr: u16, bus: &mut MemoryBus) {
         match instruction {
             CpuInstruction::CallA16
             | CpuInstruction::CallCA16
             | CpuInstruction::CallZA16
             | CpuInstruction::CallNcA16
-            | CpuInstruction::CallNzA16 => {
+            | CpuInstruction::CallNzA16
+            | CpuInstruction::Rst(_) => {
                 let high_byte = (self.registers.pc >> 8) as u8;
                 bus.write8(self.registers.sp, high_byte);
                 self.registers.sp -= 1;
@@ -704,13 +708,14 @@ impl Cpu {
         }
     }
 
-    fn set_sp_low(&mut self, instruction: CpuInstruction, addr: u16, bus: &mut MemoryBus) {
+    fn write_sp_low(&mut self, instruction: CpuInstruction, addr: u16, bus: &mut MemoryBus) {
         match instruction {
             CpuInstruction::CallA16
             | CpuInstruction::CallCA16
             | CpuInstruction::CallZA16
             | CpuInstruction::CallNcA16
-            | CpuInstruction::CallNzA16 => {
+            | CpuInstruction::CallNzA16
+            | CpuInstruction::Rst(_) => {
                 let low_byte = self.registers.pc as u8;
                 bus.write8(self.registers.sp, low_byte);
                 self.registers.pc = addr;
@@ -821,8 +826,10 @@ impl Cpu {
             }
             CpuPhase::IncrementR16(register) => self.increment_r16(register),
             CpuPhase::DecrementR16(register) => self.decrement_r16(register),
-            CpuPhase::WriteSpMemHigh(instruction, addr) => self.set_sp_high(instruction, addr, bus),
-            CpuPhase::WriteSpMemLow(instruction, addr) => self.set_sp_low(instruction, addr, bus),
+            CpuPhase::WriteSpMemHigh(instruction, addr) => {
+                self.write_sp_high(instruction, addr, bus)
+            }
+            CpuPhase::WriteSpMemLow(instruction, addr) => self.write_sp_low(instruction, addr, bus),
             CpuPhase::ReadSpHigh(instruction, low_byte) => {
                 self.read_sp_high(instruction, low_byte, bus)
             }
