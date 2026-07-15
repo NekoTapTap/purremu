@@ -1,4 +1,4 @@
-use crate::memory_bus::MemoryBus;
+use crate::memory_bus::{InterruptType, MemoryBus, PendingInterrupts};
 
 #[cfg(test)]
 mod tests;
@@ -58,6 +58,8 @@ pub enum CpuPhase {
     IncrementR16(CpuReg16),
 
     CheckRetCondition(CpuCondition),
+
+    HandleInterrupt(InterruptType),
 
     Halted,
     Stopped,
@@ -788,8 +790,17 @@ impl Cpu {
                 self.ime = true;
             }
         }
-
         let opcode = self.fetch8(bus);
+
+        let pending_interrupts = self.check_pending_interrupts(bus);
+        if !pending_interrupts.0.is_empty() {
+            self.ime = false; // "lock"
+
+            let handling_interrupt = pending_interrupts.0[0];
+            self.phase = CpuPhase::HandleInterrupt(handling_interrupt);
+
+            return;
+        }
 
         let instruction = self.decode_instruction(opcode);
         match instruction {
@@ -898,6 +909,7 @@ impl Cpu {
                 self.phase = CpuPhase::FetchOpcode;
             }
             CpuInstruction::EI => {
+                // delay 2 cycles before enabling interrupts: https://gbdev.io/pandocs/halt.html#halt-bug
                 self.ime_enable_delay = 2;
                 self.phase = CpuPhase::FetchOpcode;
             }
@@ -1124,6 +1136,26 @@ impl Cpu {
         }
     }
 
+    fn check_pending_interrupts(&mut self, bus: &MemoryBus) -> PendingInterrupts {
+        if !self.ime {
+            return PendingInterrupts::from(0);
+        }
+
+        let interrupt_enable = bus.read8(0xFFFF);
+        let interrupt_flags = bus.read8(0xFF0F);
+        let pending_interrupts = interrupt_enable & interrupt_flags;
+
+        return PendingInterrupts::from(pending_interrupts);
+    }
+
+    fn handle_interrupt(&mut self, t: InterruptType, bus: &mut MemoryBus) {
+        bus.clear_interrupt_flag(t);
+        self.registers.pc = self.registers.pc.wrapping_sub(1); // revert back
+
+        let addr = u16::from(t);
+        self.phase = CpuPhase::DecrementSpForWrite(CpuInstruction::Rst(addr), addr);
+    }
+
     pub fn step(&mut self, bus: &mut MemoryBus) {
         if self.t_cycles_until_step != 0 {
             self.t_cycles_until_step -= 1;
@@ -1162,7 +1194,6 @@ impl Cpu {
             CpuPhase::ApplyAbsoluteJumpEnableInterrupts(addr) => {
                 self.apply_absolute_jump(addr);
                 self.ime = true;
-                self.ime_enable_delay = 0;
             }
             CpuPhase::PushR16High(register) => self.push_r16_high(register, bus),
             CpuPhase::PushR16Low(register) => self.push_r16_low(register, bus),
@@ -1181,6 +1212,7 @@ impl Cpu {
             }
             CpuPhase::LdHlSpE8(raw_offset) => self.ld_hl_sp_e8(raw_offset),
             CpuPhase::WriteMem(addr, value) => self.write_mem(bus, addr, value),
+            CpuPhase::HandleInterrupt(t) => self.handle_interrupt(t, bus),
             CpuPhase::Halted | CpuPhase::Stopped => {}
         }
     }

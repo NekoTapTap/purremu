@@ -2,7 +2,7 @@ use strum::IntoEnumIterator;
 
 use crate::cpu::instructions::{CpuCbInstruction, CpuCbOperand, CpuCbOperation, CpuCondition};
 use crate::cpu::{Cpu, CpuArithmetic, CpuInstruction, CpuPhase, CpuReg8, CpuReg16};
-use crate::memory_bus::MemoryBus;
+use crate::memory_bus::{InterruptType, MemoryBus};
 
 fn rand_external_ram_addr() -> u16 {
     rand::random_range(0xA000..=0xFDFF)
@@ -2131,4 +2131,51 @@ fn test_halt_and_stop_enter_explicit_cpu_states() {
     cpu_step_n(&mut cpu, &mut bus, 4);
     assert_eq!(cpu.phase, CpuPhase::Stopped);
     assert_eq!(cpu.registers.pc, 2);
+}
+
+#[test]
+fn test_handle_interrupts() {
+    let mut bus = MemoryBus::new(vec![0; 0x8000]);
+    let mut cpu = Cpu::new_post_boot();
+    cpu.ime = true;
+    cpu.registers.sp = 0xFFFE;
+    bus.write8(0xFFFF, 0x1F); // Enable all interrupts
+    bus.write8(0xFF0F, 0x1F); // Request all interrupts
+    bus.write8(0x40, 0xD9); // V-Blank Handler
+
+    bus.rom[0x100] = 0x00; // NOP
+
+    // M1: Fetch opcode
+    let v_blank_addr = 0x40;
+    let expect_return_addr = 0x100;
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x101);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::HandleInterrupt(InterruptType::VBlank)
+    );
+    assert_eq!(cpu.registers.sp, 0xFFFE);
+
+    // M2: Move PC back, clear interrupt request flag
+    cpu_step_n(&mut cpu, &mut bus, 4);
+    assert_eq!(cpu.registers.pc, 0x100);
+    assert_eq!(
+        cpu.phase,
+        CpuPhase::DecrementSpForWrite(CpuInstruction::Rst(v_blank_addr), v_blank_addr)
+    );
+    assert_eq!(cpu.registers.sp, 0xFFFE);
+    assert_eq!(bus.read8(0xFF0F) & 0x1F, 0x1E); // V-Blank interrupt flag cleared
+
+
+    // M5: Call interrupt handler
+    cpu_step_n(&mut cpu, &mut bus, 12);
+    assert_eq!(cpu.registers.pc, v_blank_addr);
+    assert_eq!(cpu.registers.sp, 0xFFFC);
+    assert_eq!(bus.read8(0xFFFD), (expect_return_addr >> 8) as u8);
+    assert_eq!(bus.read8(0xFFFC), (expect_return_addr & 0xFF) as u8);
+
+    // Back to normal execution
+    cpu_step_n(&mut cpu, &mut bus, 16);
+    assert_eq!(cpu.phase, CpuPhase::FetchOpcode);
+    assert_eq!(cpu.registers.pc, 0x100);
 }
