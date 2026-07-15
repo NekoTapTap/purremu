@@ -1,6 +1,7 @@
 use crate::cpu::Cpu;
 use crate::memory_bus::MemoryBus;
 use crate::ppu::Ppu;
+use crate::joypad::Joypad;
 
 #[cfg(test)]
 mod tests;
@@ -32,10 +33,9 @@ impl GameBoy {
         }
     }
 
-    pub fn step(&mut self) -> Vec<Event> {
+    pub fn step(&mut self, joypad: &Joypad) -> Vec<Event> {
         let mut events = Vec::new();
-
-        // TODO: read from joypad
+        self.memory_bus.joypad = joypad.clone();
 
         if let Some(byte) = self.memory_bus.serial.step() {
             events.push(Event::SerialByte(byte));

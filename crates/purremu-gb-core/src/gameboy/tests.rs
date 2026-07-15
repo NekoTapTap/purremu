@@ -1,4 +1,5 @@
 use super::{Event, GameBoy};
+use crate::joypad::Joypad;
 
 #[test]
 fn emits_a_serial_event_from_the_memory_mapped_serial_device() {
@@ -8,7 +9,7 @@ fn emits_a_serial_event_from_the_memory_mapped_serial_device() {
 
     let mut serial_bytes = Vec::new();
     for _ in 0..4096 {
-        serial_bytes.extend(gameboy.step().into_iter().map(|event| match event {
+        serial_bytes.extend(gameboy.step(&Joypad::new()).into_iter().map(|event| match event {
             Event::SerialByte(byte) => byte,
         }));
     }

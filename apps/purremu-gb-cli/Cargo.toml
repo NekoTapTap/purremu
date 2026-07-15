@@ -7,4 +7,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+crossterm = "0.29.0"
 purremu_gb_core = { workspace = true }

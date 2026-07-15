@@ -1,4 +1,4 @@
-use crate::serial::Serial;
+use crate::{joypad::Joypad, serial::Serial};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptType {
@@ -95,6 +95,7 @@ pub struct MemoryBus {
     pub serial: Serial,
     pub interrupt_enable: Interrupt,
     pub interrupt_flags: Interrupt,
+    pub(crate) joypad: Joypad,
 }
 
 impl MemoryBus {
@@ -106,6 +107,7 @@ impl MemoryBus {
             serial: Serial::new(),
             interrupt_enable: Interrupt::new(),
             interrupt_flags: Interrupt::new(),
+            joypad: Joypad::new(),
         }
     }
 
@@ -118,6 +120,7 @@ impl MemoryBus {
             0xC000..=0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000..=0xFDFF => self.ram[(addr - 0xE000) as usize],
             // 0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize],
+            0xFF00 => self.joypad.get_by_cpu(),
             0xFF01 => self.serial.data,
             0xFF02 => self.serial.control,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
@@ -134,6 +137,7 @@ impl MemoryBus {
             0xA000..=0xBFFF => self.ram[(addr - 0xA000) as usize] = value,
             0xC000..=0xDFFF => self.ram[(addr - 0xC000) as usize] = value,
             0xE000..=0xFDFF => self.ram[(addr - 0xE000) as usize] = value,
+            0xFF00 => self.joypad.set_by_cpu(value),
             0xFF01 => self.serial.data = value,
             0xFF02 => self.serial.control = value,
             // 0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize] = value,
