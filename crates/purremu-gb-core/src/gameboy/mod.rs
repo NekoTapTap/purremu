@@ -35,7 +35,7 @@ impl GameBoy {
 
     pub fn step(&mut self, joypad: &Joypad) -> Vec<Event> {
         let mut events = Vec::new();
-        self.memory_bus.joypad = joypad.clone();
+        self.memory_bus.joypad.set_by_bus(joypad);
 
         if let Some(byte) = self.memory_bus.serial.step() {
             events.push(Event::SerialByte(byte));

@@ -28,6 +28,17 @@ impl Joypad {
         }
     }
 
+    pub fn set_by_bus(&mut self, input: &Joypad) {
+        self.a = input.a;
+        self.b = input.b;
+        self.start = input.start;
+        self.select = input.select;
+        self.up = input.up;
+        self.down = input.down;
+        self.left = input.left;
+        self.right = input.right;
+    }
+
     pub fn set_by_cpu(&mut self, buttons: u8) {
         self.select_buttons = !buttons & 0b0010_0000 != 0;
         self.select_d_pad = !buttons & 0b0001_0000 != 0;
