@@ -1,5 +1,9 @@
 [workspace]
-members = ["apps/purremu-gb-cli","crates/purremu-gb-core"]
+members = [
+    "apps/purremu-gb-cli",
+    "crates/purremu-gb-core",
+    "roms/hello-world",
+]
 resolver = "3"
 
 [workspace.package]

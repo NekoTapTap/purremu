@@ -1,19 +1,20 @@
 use crate::cpu::Cpu;
-use crate::memory_bus::MemoryBus;
-use crate::ppu::Ppu;
+use crate::memory_bus::{InterruptType, MemoryBus};
+use crate::ppu::PpuEvent::InterruptRequested;
+use crate::ppu::{Framebuffer, PpuEvent};
 use crate::joypad::Joypad;
 
 #[cfg(test)]
 mod tests;
 
 pub struct GameBoy {
-    pub cpu: Cpu,
-    pub memory_bus: MemoryBus,
-    pub ppu: Ppu,
+    cpu: Cpu,
+    memory_bus: MemoryBus,
 }
 
 pub enum Event {
     SerialByte(u8),
+    FrameReady(Framebuffer)
 }
 
 impl GameBoy {
@@ -21,7 +22,6 @@ impl GameBoy {
         Self {
             cpu: Cpu::new(),
             memory_bus: MemoryBus::new(rom_data),
-            ppu: Ppu::new(),
         }
     }
 
@@ -29,7 +29,6 @@ impl GameBoy {
         Self {
             cpu: Cpu::new_post_boot(),
             memory_bus: MemoryBus::new(rom_data),
-            ppu: Ppu::new(),
         }
     }
 
@@ -41,7 +40,14 @@ impl GameBoy {
             events.push(Event::SerialByte(byte));
         }
         self.cpu.step(&mut self.memory_bus);
-        self.ppu.step();
+
+        let ppu_events = self.memory_bus.ppu.step();
+        for ppu_event in ppu_events {
+            match ppu_event {
+                PpuEvent::FrameReady(framebuffer) => events.push(Event::FrameReady(framebuffer)),
+                InterruptRequested => self.memory_bus.request_interrupt(InterruptType::VBlank),
+            }
+        }
 
         events
     }

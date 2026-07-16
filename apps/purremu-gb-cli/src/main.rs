@@ -144,6 +144,9 @@ fn main() -> io::Result<()> {
                 GameBoyEvent::SerialByte(byte) => {
                     print!("{}", byte as char);
                 }
+                GameBoyEvent::FrameReady(_) => {
+                    // TODO: ignore it now, ignore it when cli runs in headless mode
+                }
             }
         }
     }

@@ -1,4 +1,4 @@
-use crate::{joypad::Joypad, serial::Serial};
+use crate::{joypad::Joypad, ppu::Ppu, serial::Serial};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptType {
@@ -96,6 +96,7 @@ pub struct MemoryBus {
     pub interrupt_enable: Interrupt,
     pub interrupt_flags: Interrupt,
     pub(crate) joypad: Joypad,
+    pub(crate) ppu: Ppu,
 }
 
 impl MemoryBus {
@@ -108,6 +109,7 @@ impl MemoryBus {
             interrupt_enable: Interrupt::new(),
             interrupt_flags: Interrupt::new(),
             joypad: Joypad::new(),
+            ppu: Ppu::new(),
         }
     }
 
@@ -115,17 +117,19 @@ impl MemoryBus {
     pub fn read8(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x7FFF => self.rom[addr as usize],
-            0x8000..=0x9FFF => 0, // vram
             0xA000..=0xBFFF => self.ram[(addr - 0xA000) as usize],
             0xC000..=0xDFFF => self.ram[(addr - 0xC000) as usize],
             0xE000..=0xFDFF => self.ram[(addr - 0xE000) as usize],
-            // 0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize],
             0xFF00 => self.joypad.get_by_cpu(),
             0xFF01 => self.serial.data,
             0xFF02 => self.serial.control,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => u8::from(self.interrupt_enable),
             0xFF0F => u8::from(self.interrupt_flags),
+
+            0xFE00..=0xFE9F => self.ppu.read_oam_by_cpu(addr),
+            0x8000..=0x9FFF => self.ppu.read_vram_by_cpu(addr),
+            0xFF40 => self.ppu.read_lcd_control_by_cpu(),
             _ => 0,
         }
     }
@@ -133,17 +137,19 @@ impl MemoryBus {
     pub fn write8(&mut self, addr: u16, value: u8) {
         match addr {
             0x0000..=0x7FFF => self.rom[addr as usize] = value,
-            0x8000..=0x9FFF => {} // vram
             0xA000..=0xBFFF => self.ram[(addr - 0xA000) as usize] = value,
             0xC000..=0xDFFF => self.ram[(addr - 0xC000) as usize] = value,
             0xE000..=0xFDFF => self.ram[(addr - 0xE000) as usize] = value,
             0xFF00 => self.joypad.set_by_cpu(value),
             0xFF01 => self.serial.data = value,
             0xFF02 => self.serial.control = value,
-            // 0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize] = value,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = value,
             0xFFFF => self.interrupt_enable = Interrupt::from(value),
             0xFF0F => self.interrupt_flags = Interrupt::from(value),
+
+            0xFE00..=0xFE9F => self.ppu.write_oam_by_cpu(addr, value),
+            0x8000..=0x9FFF => self.ppu.write_vram_by_cpu(addr, value),
+            0xFF40 => self.ppu.write_lcd_control_by_cpu(value),
             _ => {}
         }
     }

@@ -11,6 +11,7 @@ fn emits_a_serial_event_from_the_memory_mapped_serial_device() {
     for _ in 0..4096 {
         serial_bytes.extend(gameboy.step(&Joypad::new()).into_iter().map(|event| match event {
             Event::SerialByte(byte) => byte,
+            _ => 0
         }));
     }
 
