@@ -130,6 +130,7 @@ impl MemoryBus {
             0xFE00..=0xFE9F => self.ppu.read_oam_by_cpu(addr),
             0x8000..=0x9FFF => self.ppu.read_vram_by_cpu(addr),
             0xFF40 => self.ppu.read_lcd_control_by_cpu(),
+            0xFF44 => self.ppu.read_ly_by_cpu(),
             _ => 0,
         }
     }

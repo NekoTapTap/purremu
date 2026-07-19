@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum PpuMode {
     OamSearch,
     PixelTransfer,
@@ -153,10 +153,9 @@ pub(crate) struct Ppu {
     lcd_control: LcdControl,
     oam: OAM,
     tile_map_1: TileMap,
-    tile_map_2: TileMap,
+    // tile_map_2: TileMap,
     background_fifo: VecDeque<u8>,
     fetcher: Fetcher,
-    screen_x: u8,
 }
 
 impl Ppu {
@@ -170,10 +169,19 @@ impl Ppu {
             tile_data: TileData::new(),
             oam: OAM::new(),
             tile_map_1: TileMap::new(),
-            tile_map_2: TileMap::new(),
+            // tile_map_2: TileMap::new(),
             background_fifo: VecDeque::new(),
             fetcher: Fetcher::new(),
-            screen_x: 0,
+        }
+    }
+
+    pub fn screen_x(&self) -> u8 {
+        if self.col < 80 {
+            0
+        } else if self.col < 456 {
+            (self.col - 80) as u8
+        } else {
+            160
         }
     }
 
@@ -190,8 +198,7 @@ impl Ppu {
                 // TODO: mix
                 let pixel = self.background_fifo.pop_front();
                 if let Some(color_id) = pixel {
-                    self.framebuffer.0[self.row as usize][self.screen_x as usize] = color_id;
-                    self.screen_x += 1;
+                    self.framebuffer.0[self.row as usize][self.screen_x() as usize] = color_id;
                 }
 
                 match self.fetcher.state {
@@ -280,11 +287,10 @@ impl Ppu {
                 }
             }
             PpuMode::PixelTransfer => {
-                if self.screen_x >= 160 {
+                if self.screen_x() >= 160 {
                     self.mode = PpuMode::HBlank;
                     self.fetcher = Fetcher::new();
                     self.background_fifo.clear();
-                    self.screen_x = 0;
                 }
             }
 
@@ -355,12 +361,18 @@ impl Ppu {
         u8::from(&self.lcd_control)
     }
 
+    pub(crate) fn read_ly_by_cpu(&self) -> u8 {
+        self.row
+    }
+
     pub(crate) fn write_lcd_control_by_cpu(&mut self, value: u8) {
         self.lcd_control = LcdControl::from(value);
 
         if self.lcd_control.lcd_and_ppu_enable {
             self.mode = PpuMode::OamSearch;
             self.framebuffer = Framebuffer::new();
+            self.col = 0;
+            self.row = 0;
         }
     }
 }
