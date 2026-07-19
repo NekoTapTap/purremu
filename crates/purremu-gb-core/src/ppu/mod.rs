@@ -156,6 +156,7 @@ pub(crate) struct Ppu {
     // tile_map_2: TileMap,
     background_fifo: VecDeque<u8>,
     fetcher: Fetcher,
+    screen_x: u8, // how many pixels have been popped from the FIFO
 }
 
 impl Ppu {
@@ -172,16 +173,7 @@ impl Ppu {
             // tile_map_2: TileMap::new(),
             background_fifo: VecDeque::new(),
             fetcher: Fetcher::new(),
-        }
-    }
-
-    pub fn screen_x(&self) -> u8 {
-        if self.col < 80 {
-            0
-        } else if self.col < 456 {
-            (self.col - 80) as u8
-        } else {
-            160
+            screen_x: 0
         }
     }
 
@@ -198,7 +190,8 @@ impl Ppu {
                 // TODO: mix
                 let pixel = self.background_fifo.pop_front();
                 if let Some(color_id) = pixel {
-                    self.framebuffer.0[self.row as usize][self.screen_x() as usize] = color_id;
+                    self.framebuffer.0[self.row as usize][self.screen_x as usize] = color_id;
+                    self.screen_x += 1;
                 }
 
                 match self.fetcher.state {
@@ -287,10 +280,11 @@ impl Ppu {
                 }
             }
             PpuMode::PixelTransfer => {
-                if self.screen_x() >= 160 {
+                if self.screen_x >= 160 {
                     self.mode = PpuMode::HBlank;
                     self.fetcher = Fetcher::new();
                     self.background_fifo.clear();
+                    self.screen_x = 0;
                 }
             }
 
@@ -373,6 +367,7 @@ impl Ppu {
             self.framebuffer = Framebuffer::new();
             self.col = 0;
             self.row = 0;
+            self.screen_x = 0;
         }
     }
 }
