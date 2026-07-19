@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/purremu-gb-cli",
+    "apps/purremu-gb-desktop",
     "crates/purremu-gb-core",
     "roms/hello-world",
 ]

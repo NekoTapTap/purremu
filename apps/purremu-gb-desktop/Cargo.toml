@@ -1,0 +1,12 @@
+[package]
+name = "purremu-gb-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pixels = "0.17.2"
+purremu_gb_core = { workspace = true }
+winit = "0.30.13"

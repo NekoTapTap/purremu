@@ -18,6 +18,21 @@ Cat is liquid, it can flow into any shape. I want to be flexible and adaptable l
 
 Purr is the sound that a cat makes when it is happy, so I named my project Purremu. Purr~
 
+## Desktop Frontend
+
+Run the desktop frontend with a ROM path as its only command-line argument:
+
+```shell
+cargo run -p purremu-gb-desktop -- path/to/your-rom.gb
+```
+
+Controls:
+
+- `W`, `A`, `S`, `D`: D-pad
+- `J`, `K`: A and B
+- `U`, `I`: Select and Start
+- `Escape`: Quit
+
 ## Roadmap
 
 ### GameBoy
