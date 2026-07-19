@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use crate::memory_bus::InterruptType;
+
 #[derive(PartialEq, Debug)]
 enum PpuMode {
     OamSearch,
@@ -57,7 +59,7 @@ impl TileMap {
 
 pub(crate) enum PpuEvent {
     FrameReady(Framebuffer),
-    InterruptRequested,
+    InterruptRequested(InterruptType),
 }
 
 pub(crate) struct LcdControl {
@@ -114,6 +116,37 @@ impl From<&LcdControl> for u8 {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct LcdStatus {
+    mode_oam_interrupt: bool,
+    mode_v_blank_interrupt: bool,
+    mode_h_blank_interrupt: bool,
+    lyc_equals_ly_interrupt: bool,
+}
+
+impl From<u8> for LcdStatus {
+    // PPU mode is read-only, so we don't include it here
+    #[rustfmt::skip]
+    fn from(value: u8) -> Self {
+        Self {
+            lyc_equals_ly_interrupt: value & 0b0100_0000 != 0, // bit 6
+            mode_oam_interrupt:      value & 0b0010_0000 != 0, // bit 5
+            mode_v_blank_interrupt:  value & 0b0001_0000 != 0, // bit 4
+            mode_h_blank_interrupt:  value & 0b0000_1000 != 0, // bit 3
+        }
+    }
+}
+
+impl From<&LcdStatus> for u8 {
+    #[rustfmt::skip]
+    fn from(flags: &LcdStatus) -> Self {
+        (flags.lyc_equals_ly_interrupt as u8) << 6
+            | (flags.mode_oam_interrupt as u8) << 5
+            | (flags.mode_v_blank_interrupt as u8) << 4
+            | (flags.mode_h_blank_interrupt as u8) << 3
+    }
+}
+
 enum FetcherState {
     FetchTileId,
     FetchTileDataLow,
@@ -156,6 +189,8 @@ pub(crate) struct Ppu {
     background_fifo: VecDeque<u8>,
     fetcher: Fetcher,
     screen_x: u8, // how many pixels have been popped from the FIFO
+    lyc: u8,      // LY Compare
+    lcd_status: LcdStatus,
 }
 
 impl Ppu {
@@ -172,6 +207,8 @@ impl Ppu {
             background_fifo: VecDeque::new(),
             fetcher: Fetcher::new(),
             screen_x: 0,
+            lyc: 0,
+            lcd_status: LcdStatus::default(),
         }
     }
 
@@ -183,7 +220,7 @@ impl Ppu {
             // https://gbdev.io/pandocs/Tile_Data.html#vram-tile-data
             // Tile data can store 384 tiles but tile map can only address 256 tiles
             (0x1000_isize + self.fetcher.tile_id as i8 as isize * 16) as usize + // tile index
-                     (self.row as usize % 8) * 2                                 // low byte, line of the tile it self
+                     (self.row as usize % 8) * 2 // low byte, line of the tile it self
         }
     }
 
@@ -195,7 +232,11 @@ impl Ppu {
         }
 
         match self.mode {
-            PpuMode::OamSearch => {}
+            PpuMode::OamSearch => {
+                if self.lyc == self.row && self.lcd_status.lyc_equals_ly_interrupt {
+                    events.push(PpuEvent::InterruptRequested(InterruptType::LCD));
+                }
+            }
             PpuMode::PixelTransfer => {
                 // TODO: mix
                 let pixel = self.background_fifo.pop_front();
@@ -276,10 +317,20 @@ impl Ppu {
 
                     if self.row >= 144 {
                         self.mode = PpuMode::VBlank;
-                        events.push(PpuEvent::InterruptRequested);
+                        events.push(PpuEvent::InterruptRequested(InterruptType::VBlank));
+
+                        if self.lcd_status.mode_v_blank_interrupt {
+                            events.push(PpuEvent::InterruptRequested(InterruptType::LCD));
+                        }
+
+                        events.push(PpuEvent::InterruptRequested(InterruptType::VBlank));
                         events.push(PpuEvent::FrameReady(self.framebuffer.clone()));
                     } else {
                         self.mode = PpuMode::OamSearch;
+
+                        if self.lcd_status.mode_oam_interrupt {
+                            events.push(PpuEvent::InterruptRequested(InterruptType::LCD));
+                        }
                     }
                 }
             }
@@ -289,6 +340,10 @@ impl Ppu {
                     self.fetcher = Fetcher::new();
                     self.background_fifo.clear();
                     self.screen_x = 0;
+
+                    if self.lcd_status.mode_h_blank_interrupt {
+                        events.push(PpuEvent::InterruptRequested(InterruptType::LCD));
+                    }
                 }
             }
 
@@ -371,5 +426,24 @@ impl Ppu {
             self.row = 0;
             self.screen_x = 0;
         }
+    }
+
+    pub(crate) fn read_lcd_status_by_cpu(&self) -> u8 {
+        let mode_bits = match self.mode {
+            PpuMode::OamSearch => 2,
+            PpuMode::PixelTransfer => 3,
+            PpuMode::HBlank => 0,
+            PpuMode::VBlank => 1,
+        };
+
+        mode_bits | u8::from(&self.lcd_status) | ((self.row == self.lyc) as u8) << 2
+    }
+
+    pub(crate) fn write_lcd_status_by_cpu(&mut self, value: u8) {
+        self.lcd_status = LcdStatus::from(value);
+    }
+
+    pub(crate) fn write_lyc_by_cpu(&mut self, value: u8) {
+        self.lyc = value;
     }
 }

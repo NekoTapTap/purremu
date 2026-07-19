@@ -1,5 +1,5 @@
 use crate::cpu::Cpu;
-use crate::memory_bus::{InterruptType, MemoryBus};
+use crate::memory_bus::MemoryBus;
 use crate::ppu::PpuEvent::InterruptRequested;
 use crate::ppu::{Framebuffer, PpuEvent};
 use crate::joypad::Joypad;
@@ -45,7 +45,7 @@ impl GameBoy {
         for ppu_event in ppu_events {
             match ppu_event {
                 PpuEvent::FrameReady(framebuffer) => events.push(Event::FrameReady(framebuffer)),
-                InterruptRequested => self.memory_bus.request_interrupt(InterruptType::VBlank),
+                InterruptRequested(interrupt_type) => self.memory_bus.request_interrupt(interrupt_type),
             }
         }
 
