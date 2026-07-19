@@ -64,7 +64,7 @@ pub(crate) struct LcdControl {
     lcd_and_ppu_enable: bool,
     window_tile_map_area: bool,
     window_enable: bool,
-    bg_and_window_tile_data_area: bool,
+    use_unsigned_tile_addressing: bool,
     bg_tile_map_area: bool,
     obj_size: bool,
     obj_enable: bool,
@@ -77,7 +77,7 @@ impl LcdControl {
             lcd_and_ppu_enable: false,
             window_tile_map_area: false,
             window_enable: false,
-            bg_and_window_tile_data_area: false,
+            use_unsigned_tile_addressing: false,
             bg_tile_map_area: false,
             obj_size: false,
             obj_enable: false,
@@ -92,7 +92,7 @@ impl From<u8> for LcdControl {
             lcd_and_ppu_enable: value & 0b1000_0000 != 0,
             window_tile_map_area: value & 0b0100_0000 != 0,
             window_enable: value & 0b0010_0000 != 0,
-            bg_and_window_tile_data_area: value & 0b0001_0000 != 0,
+            use_unsigned_tile_addressing: value & 0b0001_0000 != 0,
             bg_tile_map_area: value & 0b0000_1000 != 0,
             obj_size: value & 0b0000_0100 != 0,
             obj_enable: value & 0b0000_0010 != 0,
@@ -106,7 +106,7 @@ impl From<&LcdControl> for u8 {
         (flags.lcd_and_ppu_enable as u8) << 7
             | (flags.window_tile_map_area as u8) << 6
             | (flags.window_enable as u8) << 5
-            | (flags.bg_and_window_tile_data_area as u8) << 4
+            | (flags.use_unsigned_tile_addressing as u8) << 4
             | (flags.bg_tile_map_area as u8) << 3
             | (flags.obj_size as u8) << 2
             | (flags.obj_enable as u8) << 1
@@ -152,8 +152,7 @@ pub(crate) struct Ppu {
     tile_data: TileData,
     lcd_control: LcdControl,
     oam: OAM,
-    tile_map_1: TileMap,
-    // tile_map_2: TileMap,
+    tile_map: TileMap,
     background_fifo: VecDeque<u8>,
     fetcher: Fetcher,
     screen_x: u8, // how many pixels have been popped from the FIFO
@@ -169,11 +168,22 @@ impl Ppu {
             framebuffer: Framebuffer::new(),
             tile_data: TileData::new(),
             oam: OAM::new(),
-            tile_map_1: TileMap::new(),
-            // tile_map_2: TileMap::new(),
+            tile_map: TileMap::new(),
             background_fifo: VecDeque::new(),
             fetcher: Fetcher::new(),
-            screen_x: 0
+            screen_x: 0,
+        }
+    }
+
+    pub fn tile_address(&self) -> usize {
+        if self.lcd_control.use_unsigned_tile_addressing {
+            self.fetcher.tile_id as usize * 16 + // tile index
+                     (self.row as usize % 8) * 2 // low byte, line of the tile it self
+        } else {
+            // https://gbdev.io/pandocs/Tile_Data.html#vram-tile-data
+            // Tile data can store 384 tiles but tile map can only address 256 tiles
+            (0x1000_isize + self.fetcher.tile_id as i8 as isize * 16) as usize + // tile index
+                     (self.row as usize % 8) * 2                                 // low byte, line of the tile it self
         }
     }
 
@@ -199,7 +209,7 @@ impl Ppu {
                         let tile_y = usize::from(self.row / 8); // line of the tile map
                         let tile_x = usize::from(self.fetcher.tile_x);
 
-                        self.fetcher.tile_id = self.tile_map_1.0[tile_y][tile_x];
+                        self.fetcher.tile_id = self.tile_map.0[tile_y][tile_x];
 
                         self.fetcher.clock -= 1;
                         if self.fetcher.clock == 0 {
@@ -208,10 +218,7 @@ impl Ppu {
                         }
                     }
                     FetcherState::FetchTileDataLow => {
-                        self.fetcher.tile_data_low = self.tile_data.0[
-                            self.fetcher.tile_id as usize * 16 + // tile index
-                            (self.row as usize % 8) * 2 // low byte, line of the tile it self
-                            ];
+                        self.fetcher.tile_data_low = self.tile_data.0[self.tile_address()];
                         self.fetcher.clock -= 1;
                         if self.fetcher.clock == 0 {
                             self.fetcher.state = FetcherState::FetchTileDataHigh;
@@ -219,10 +226,7 @@ impl Ppu {
                         }
                     }
                     FetcherState::FetchTileDataHigh => {
-                        self.fetcher.tile_data_high = self.tile_data.0[
-                            self.fetcher.tile_id as usize * 16 + // tile index
-                             (self.row as usize % 8) * 2 + 1 // high byte, line of the tile
-                             ];
+                        self.fetcher.tile_data_high = self.tile_data.0[self.tile_address() + 1];
                         self.fetcher.clock -= 1;
                         if self.fetcher.clock == 0 {
                             self.fetcher.state = FetcherState::Sleep;
@@ -312,8 +316,7 @@ impl Ppu {
 
         match addr {
             0x8000..=0x97FF => self.tile_data.0[addr as usize - 0x8000 as usize],
-            0x9800..=0x9BFF => self.tile_map_1.get(addr as usize - 0x9800 as usize),
-            // 0x9C00..=0x9FFF => self.tile_map_2.0[addr as usize - 0x9C00 as usize],
+            0x9800..=0x9BFF => self.tile_map.get(addr as usize - 0x9800 as usize),
             _ => 0,
         }
     }
@@ -325,8 +328,7 @@ impl Ppu {
 
         match addr {
             0x8000..=0x97FF => self.tile_data.0[addr as usize - 0x8000 as usize] = value,
-            0x9800..=0x9BFF => self.tile_map_1.set(addr as usize - 0x9800 as usize, value),
-            // 0x9C00..=0x9FFF => self.tile_map_2.0[addr as usize - 0x9C00 as usize] = value,
+            0x9800..=0x9BFF => self.tile_map.set(addr as usize - 0x9800 as usize, value),
             _ => {}
         }
     }

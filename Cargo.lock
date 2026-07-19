@@ -1435,13 +1435,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "purremu-gb-hello-world-rom"
-version = "0.1.0"
-dependencies = [
- "purremu_gb_core",
-]
-
-[[package]]
 name = "purremu_gb_core"
 version = "0.1.0"
 dependencies = [
