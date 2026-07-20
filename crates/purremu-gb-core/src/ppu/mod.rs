@@ -4,10 +4,10 @@ use crate::memory_bus::InterruptType;
 
 #[derive(PartialEq, Debug)]
 enum PpuMode {
-    OamSearch,
-    PixelTransfer,
-    HBlank,
-    VBlank,
+    HBlank,        // Mode 0
+    VBlank,        // Mode 1
+    OamSearch,     // Mode 2
+    PixelTransfer, // Mode 3
 }
 
 #[derive(Debug, Clone)]
@@ -188,9 +188,12 @@ pub(crate) struct Ppu {
     tile_map: TileMap,
     background_fifo: VecDeque<u8>,
     fetcher: Fetcher,
-    screen_x: u8, // how many pixels have been popped from the FIFO
+    screen_x: u8, // how many pixels have been drawn on the current line
     lyc: u8,      // LY Compare
     lcd_status: LcdStatus,
+    scx: u8, // Scroll X
+    scy: u8, // Scroll Y
+    pixels_to_discard: u8,
 }
 
 impl Ppu {
@@ -209,18 +212,22 @@ impl Ppu {
             screen_x: 0,
             lyc: 0,
             lcd_status: LcdStatus::default(),
+            scx: 0,
+            scy: 0,
+            pixels_to_discard: 0,
         }
     }
 
     pub fn tile_address(&self) -> usize {
+        let line_in_tile = self.row.wrapping_add(self.scy) % 8; // which line of the tile we are currently drawing
         if self.lcd_control.use_unsigned_tile_addressing {
             self.fetcher.tile_id as usize * 16 + // tile index
-                     (self.row as usize % 8) * 2 // low byte, line of the tile it self
+                     (line_in_tile as usize) * 2 // low byte, line of the tile it self
         } else {
             // https://gbdev.io/pandocs/Tile_Data.html#vram-tile-data
             // Tile data can store 384 tiles but tile map can only address 256 tiles
             (0x1000_isize + self.fetcher.tile_id as i8 as isize * 16) as usize + // tile index
-                     (self.row as usize % 8) * 2 // low byte, line of the tile it self
+                     (line_in_tile as usize) * 2 // low byte, line of the tile it self
         }
     }
 
@@ -241,14 +248,21 @@ impl Ppu {
                 // TODO: mix
                 let pixel = self.background_fifo.pop_front();
                 if let Some(color_id) = pixel {
-                    self.framebuffer.0[self.row as usize][self.screen_x as usize] = color_id;
-                    self.screen_x += 1;
+                    if self.pixels_to_discard > 0 {
+                        self.pixels_to_discard -= 1;
+                    } else {
+                        self.framebuffer.0[self.row as usize][self.screen_x as usize] = color_id;
+                        self.screen_x += 1;
+                    }
                 }
 
                 match self.fetcher.state {
                     FetcherState::FetchTileId => {
-                        let tile_y = usize::from(self.row / 8); // line of the tile map
-                        let tile_x = usize::from(self.fetcher.tile_x);
+                        let background_y = self.row.wrapping_add(self.scy);
+                        let tile_y = usize::from(background_y / 8); // line of the tile map
+
+                        let first_tile_x = usize::from(self.scx / 8); // skipped tiles at the start of the line
+                        let tile_x = (first_tile_x + self.fetcher.tile_x as usize) % 32; // col of the tile map
 
                         self.fetcher.tile_id = self.tile_map.0[tile_y][tile_x];
 
@@ -308,6 +322,7 @@ impl Ppu {
                 if self.col >= 80 {
                     self.fetcher.tile_x = 0; // start of the tile map line
                     self.mode = PpuMode::PixelTransfer;
+                    self.pixels_to_discard = self.scx % 8; // discard pixels from the FIFO based on SCX
                 }
             }
             PpuMode::HBlank => {
@@ -445,5 +460,21 @@ impl Ppu {
 
     pub(crate) fn write_lyc_by_cpu(&mut self, value: u8) {
         self.lyc = value;
+    }
+
+    pub(crate) fn read_scroll_x_by_cpu(&self) -> u8 {
+        self.scx
+    }
+
+    pub(crate) fn write_scroll_x_by_cpu(&mut self, value: u8) {
+        self.scx = value;
+    }
+
+    pub(crate) fn read_scroll_y_by_cpu(&self) -> u8 {
+        self.scy
+    }
+
+    pub(crate) fn write_scroll_y_by_cpu(&mut self, value: u8) {
+        self.scy = value;
     }
 }

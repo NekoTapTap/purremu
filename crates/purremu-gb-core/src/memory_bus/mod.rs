@@ -131,6 +131,8 @@ impl MemoryBus {
             0x8000..=0x9FFF => self.ppu.read_vram_by_cpu(addr),
             0xFF40 => self.ppu.read_lcd_control_by_cpu(),
             0xFF41 => self.ppu.read_lcd_status_by_cpu(),
+            0xFF42 => self.ppu.read_scroll_y_by_cpu(),
+            0xFF43 => self.ppu.read_scroll_x_by_cpu(),
             0xFF44 => self.ppu.read_ly_by_cpu(),
             _ => 0,
         }
@@ -153,6 +155,8 @@ impl MemoryBus {
             0x8000..=0x9FFF => self.ppu.write_vram_by_cpu(addr, value),
             0xFF40 => self.ppu.write_lcd_control_by_cpu(value),
             0xFF41 => self.ppu.write_lcd_status_by_cpu(value),
+            0xFF42 => self.ppu.write_scroll_y_by_cpu(value),
+            0xFF43 => self.ppu.write_scroll_x_by_cpu(value),
             0xFF45 => self.ppu.write_lyc_by_cpu(value),
             _ => {}
         }
