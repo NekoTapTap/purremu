@@ -1213,7 +1213,17 @@ impl Cpu {
             CpuPhase::LdHlSpE8(raw_offset) => self.ld_hl_sp_e8(raw_offset),
             CpuPhase::WriteMem(addr, value) => self.write_mem(bus, addr, value),
             CpuPhase::HandleInterrupt(t) => self.handle_interrupt(t, bus),
-            CpuPhase::Halted | CpuPhase::Stopped => {}
+            CpuPhase::Halted => {
+                // should wake up on any interrupt, even if IME is disabled
+                let interrupt_enable = bus.read8(0xFFFF);
+                let interrupt_flags = bus.read8(0xFF0F);
+                let pending_interrupts = interrupt_enable & interrupt_flags;
+
+                if pending_interrupts != 0 {
+                    self.phase = CpuPhase::FetchOpcode;
+                }
+            }
+            CpuPhase::Stopped => {}
         }
     }
 
