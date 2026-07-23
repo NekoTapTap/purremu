@@ -162,6 +162,8 @@ struct Fetcher {
     tile_data_high: u8,
     clock: u8,
     tile_x: u8,
+    pending_sprites: VecDeque<Sprite>,
+    current_sprite: Option<Sprite>,
 }
 
 impl Fetcher {
@@ -173,6 +175,63 @@ impl Fetcher {
             tile_data_high: 0,
             clock: 2,
             tile_x: 0,
+            pending_sprites: VecDeque::new(),
+            current_sprite: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SpriteAttributes {
+    priority: bool,
+    y_flip: bool,
+    x_flip: bool,
+    palette_number: u8,
+    #[allow(dead_code)]
+    fetch_tile_from_bank_1: bool, // CGB only, if false, fetch tile from bank 0
+    #[allow(dead_code)]
+    cgb_palette_number: u8, // CGB only, 0-7
+}
+
+impl From<u8> for SpriteAttributes {
+    fn from(value: u8) -> Self {
+        Self {
+            priority: value & 0b1000_0000 != 0,
+            y_flip: value & 0b0100_0000 != 0,
+            x_flip: value & 0b0010_0000 != 0,
+            palette_number: (value & 0b0001_0000) >> 4,
+            fetch_tile_from_bank_1: value & 0b0000_1000 != 0,
+            cgb_palette_number: value & 0b0000_0111,
+        }
+    }
+}
+
+impl From<&SpriteAttributes> for u8 {
+    fn from(flags: &SpriteAttributes) -> Self {
+        (flags.priority as u8) << 7
+            | (flags.y_flip as u8) << 6
+            | (flags.x_flip as u8) << 5
+            | (flags.palette_number & 0b0000_0001) << 4
+            | (flags.fetch_tile_from_bank_1 as u8) << 3
+            | (flags.cgb_palette_number & 0b0000_0111)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Sprite {
+    y: u8,
+    x: u8,
+    tile_index: u8,
+    attributes: SpriteAttributes,
+}
+
+impl From<[u8; 4]> for Sprite {
+    fn from(data: [u8; 4]) -> Self {
+        Self {
+            y: data[0],
+            x: data[1],
+            tile_index: data[2],
+            attributes: SpriteAttributes::from(data[3]),
         }
     }
 }
@@ -187,6 +246,7 @@ pub(crate) struct Ppu {
     oam: OAM,
     tile_map: TileMap,
     background_fifo: VecDeque<u8>,
+    object_fifo: VecDeque<u8>,
     fetcher: Fetcher,
     screen_x: u8, // how many pixels have been drawn on the current line
     lyc: u8,      // LY Compare
@@ -194,6 +254,7 @@ pub(crate) struct Ppu {
     scx: u8, // Scroll X
     scy: u8, // Scroll Y
     pixels_to_discard: u8,
+    sprites_to_draw: Vec<Sprite>,
 }
 
 impl Ppu {
@@ -208,6 +269,7 @@ impl Ppu {
             oam: OAM::new(),
             tile_map: TileMap::new(),
             background_fifo: VecDeque::new(),
+            object_fifo: VecDeque::new(),
             fetcher: Fetcher::new(),
             screen_x: 0,
             lyc: 0,
@@ -215,11 +277,26 @@ impl Ppu {
             scx: 0,
             scy: 0,
             pixels_to_discard: 0,
+            sprites_to_draw: Vec::new(),
         }
     }
 
+    fn get_sprite_at(&self, x: u8) -> Vec<Sprite> {
+        self.sprites_to_draw
+            .iter()
+            .filter(|sprite| sprite.x == x)
+            .copied()
+            .collect()
+    }
+
     pub fn tile_address(&self) -> usize {
-        let line_in_tile = self.row.wrapping_add(self.scy) % 8; // which line of the tile we are currently drawing
+        let mut line_in_tile = self.row.wrapping_add(self.scy) % 8; // which line of the tile we are currently drawing
+        if let Some(sprite) = self.fetcher.current_sprite {
+            if sprite.attributes.y_flip {
+                line_in_tile = 7 - line_in_tile;
+            }
+        }
+
         if self.lcd_control.use_unsigned_tile_addressing {
             self.fetcher.tile_id as usize * 16 + // tile index
                      (line_in_tile as usize) * 2 // low byte, line of the tile it self
@@ -231,6 +308,52 @@ impl Ppu {
         }
     }
 
+    pub(crate) fn transfer_pixel(&mut self) {
+        let background_pixel = self.background_fifo.pop_front();
+        let object_pixel = self.object_fifo.pop_front();
+
+        match background_pixel {
+            Some(bg_color_id) => {
+                match object_pixel {
+                    Some(obj_color_id) => {
+                        // If the object pixel is not transparent (color ID 0), it takes priority over the background pixel
+                        if obj_color_id != 0 {
+                            self.framebuffer.0[self.row as usize][self.screen_x as usize] =
+                                obj_color_id;
+                            self.col += 1;
+                            return;
+                        }
+
+                        self.framebuffer.0[self.row as usize][self.screen_x as usize] = bg_color_id;
+                        self.col += 1;
+                    }
+                    None => {
+                        if self.pixels_to_discard > 0 {
+                            self.pixels_to_discard -= 1;
+                            return;
+                        }
+
+                        self.framebuffer.0[self.row as usize][self.screen_x as usize] = bg_color_id;
+                        self.col += 1;
+                    }
+                }
+            }
+            None => {
+                if let Some(obj_color_id) = object_pixel {
+                    self.framebuffer.0[self.row as usize][self.screen_x as usize] = obj_color_id;
+                    self.col += 1;
+                }
+            }
+        }
+    }
+
+    fn check_and_push_sprite(&mut self) {
+        let sprites = self.get_sprite_at(self.screen_x);
+        sprites.iter().for_each(|sprite| {
+            self.fetcher.pending_sprites.push_back(*sprite);
+        });
+    }
+
     pub fn step(&mut self) -> Vec<PpuEvent> {
         let mut events = Vec::<PpuEvent>::new();
 
@@ -238,71 +361,142 @@ impl Ppu {
             return events;
         }
 
+        // mode-specific behavior
         match self.mode {
             PpuMode::OamSearch => {
                 if self.lyc == self.row && self.lcd_status.lyc_equals_ly_interrupt {
                     events.push(PpuEvent::InterruptRequested(InterruptType::LCD));
                 }
-            }
-            PpuMode::PixelTransfer => {
-                // TODO: mix
-                let pixel = self.background_fifo.pop_front();
-                if let Some(color_id) = pixel {
-                    if self.pixels_to_discard > 0 {
-                        self.pixels_to_discard -= 1;
-                    } else {
-                        self.framebuffer.0[self.row as usize][self.screen_x as usize] = color_id;
-                        self.screen_x += 1;
+
+                if self.col % 2 == 0 && self.sprites_to_draw.len() < 10 {
+                    let sprite_index = self.col / 2;
+                    let sprite = Sprite::from([
+                        self.oam.0[sprite_index as usize * 4],
+                        self.oam.0[sprite_index as usize * 4 + 1],
+                        self.oam.0[sprite_index as usize * 4 + 2],
+                        self.oam.0[sprite_index as usize * 4 + 3],
+                    ]);
+
+                    if sprite.y.wrapping_sub(16) <= self.row
+                        && self.row < sprite.y.wrapping_sub(16).wrapping_add(8)
+                        && self.sprites_to_draw.len() < 10
+                    {
+                        self.sprites_to_draw.push(sprite);
                     }
                 }
 
+                self.col += 1;
+            }
+            PpuMode::PixelTransfer => {
+                self.transfer_pixel();
+
                 match self.fetcher.state {
                     FetcherState::FetchTileId => {
-                        let background_y = self.row.wrapping_add(self.scy);
-                        let tile_y = usize::from(background_y / 8); // line of the tile map
-
-                        let first_tile_x = usize::from(self.scx / 8); // skipped tiles at the start of the line
-                        let tile_x = (first_tile_x + self.fetcher.tile_x as usize) % 32; // col of the tile map
-
-                        self.fetcher.tile_id = self.tile_map.0[tile_y][tile_x];
-
-                        self.fetcher.clock -= 1;
-                        if self.fetcher.clock == 0 {
-                            self.fetcher.state = FetcherState::FetchTileDataLow;
-                            self.fetcher.clock = 2;
+                        if self.fetcher.clock > 0 {
+                            self.fetcher.clock -= 1;
                         }
+
+                        let sprites = self.get_sprite_at(self.screen_x);
+                        if sprites.len() > 0 {
+                            sprites.iter().for_each(|sprite| {
+                                self.fetcher.pending_sprites.push_back(*sprite);
+                            });
+
+                            let sprite = self.fetcher.pending_sprites.pop_front();
+                            if let Some(s) = sprite {
+                                self.fetcher.current_sprite = Some(s);
+                                self.fetcher.tile_id = s.tile_index;
+                            }
+                        } else {
+                            let background_y = self.row.wrapping_add(self.scy);
+                            let tile_y = usize::from(background_y / 8); // line of the tile map
+
+                            let first_tile_x = usize::from(self.scx / 8); // skipped tiles at the start of the line
+                            let tile_x = (first_tile_x + self.fetcher.tile_x as usize) % 32; // col of the tile map
+
+                            self.fetcher.tile_id = self.tile_map.0[tile_y][tile_x];
+                        }
+
+                        self.fetcher.state = FetcherState::FetchTileDataLow;
+                        self.fetcher.clock = 2;
                     }
                     FetcherState::FetchTileDataLow => {
-                        self.fetcher.tile_data_low = self.tile_data.0[self.tile_address()];
-                        self.fetcher.clock -= 1;
-                        if self.fetcher.clock == 0 {
-                            self.fetcher.state = FetcherState::FetchTileDataHigh;
-                            self.fetcher.clock = 2;
+                        if self.fetcher.clock > 0 {
+                            self.fetcher.clock -= 1;
                         }
+
+                        self.fetcher.tile_data_low = self.tile_data.0[self.tile_address()];
+                        if let Some(sprite) = self.fetcher.current_sprite {
+                            if sprite.attributes.x_flip {
+                                self.fetcher.tile_data_low =
+                                    self.fetcher.tile_data_low.reverse_bits();
+                            }
+                        }
+
+                        self.check_and_push_sprite();
+
+                        self.fetcher.state = FetcherState::FetchTileDataHigh;
+                        self.fetcher.clock = 2;
                     }
                     FetcherState::FetchTileDataHigh => {
-                        self.fetcher.tile_data_high = self.tile_data.0[self.tile_address() + 1];
-                        self.fetcher.clock -= 1;
-                        if self.fetcher.clock == 0 {
-                            self.fetcher.state = FetcherState::Sleep;
-                            self.fetcher.clock = 2;
+                        if self.fetcher.clock > 0 {
+                            self.fetcher.clock -= 1;
                         }
+
+                        self.fetcher.tile_data_high = self.tile_data.0[self.tile_address() + 1];
+                        if let Some(sprite) = self.fetcher.current_sprite {
+                            if sprite.attributes.x_flip {
+                                self.fetcher.tile_data_high =
+                                    self.fetcher.tile_data_high.reverse_bits();
+                            }
+                        }
+
+                        self.check_and_push_sprite();
+
+                        self.fetcher.state = FetcherState::Sleep;
+                        self.fetcher.clock = 2;
                     }
                     FetcherState::Sleep => {
-                        self.fetcher.clock -= 1;
-                        if self.fetcher.clock == 0 {
-                            self.fetcher.state = FetcherState::Push;
-                            self.fetcher.clock = 2;
+                        if self.fetcher.clock > 0 {
+                            self.fetcher.clock -= 1;
                         }
+
+                        self.check_and_push_sprite();
+
+                        self.fetcher.state = FetcherState::Push;
+                        self.fetcher.clock = 2;
                     }
                     FetcherState::Push => {
-                        if self.background_fifo.is_empty() {
+                        if self.fetcher.current_sprite.is_some() {
+                            if self.object_fifo.len() < 8 {
+                                for i in (0..8).rev() {
+                                    let bit_low = (self.fetcher.tile_data_low >> i) & 1;
+                                    let bit_high = (self.fetcher.tile_data_high >> i) & 1;
+                                    let color_id = (bit_high << 1) | bit_low;
+
+                                    if let Some(pixel) = self.object_fifo.get(i) {
+                                        if *pixel == 0 {
+                                            self.object_fifo[i] = color_id;
+                                        }
+                                    } else {
+                                        self.object_fifo.push_back(color_id);
+                                    }
+                                }
+
+                                self.check_and_push_sprite();
+
+                                self.fetcher.state = FetcherState::FetchTileId;
+                                self.fetcher.clock = 2;
+                            }
+                        } else if self.background_fifo.is_empty() {
                             for i in (0..8).rev() {
                                 let bit_low = (self.fetcher.tile_data_low >> i) & 1;
                                 let bit_high = (self.fetcher.tile_data_high >> i) & 1;
                                 let color_id = (bit_high << 1) | bit_low;
                                 self.background_fifo.push_back(color_id);
                             }
+
+                            self.check_and_push_sprite();
 
                             self.fetcher.tile_x = self.fetcher.tile_x.wrapping_add(1) & 31;
                             self.fetcher.state = FetcherState::FetchTileId;
@@ -311,15 +505,22 @@ impl Ppu {
                     }
                 }
             }
-            PpuMode::HBlank => {}
-            PpuMode::VBlank => {}
+            _ => {
+                self.col += 1;
+            }
         }
 
-        self.col += 1;
-
+        // state transitions
         match self.mode {
             PpuMode::OamSearch => {
                 if self.col >= 80 {
+                    self.sprites_to_draw.sort_by(|a, b| {
+                        if a.x == b.x {
+                            a.tile_index.cmp(&b.tile_index)
+                        } else {
+                            a.x.cmp(&b.x)
+                        }
+                    });
                     self.fetcher.tile_x = 0; // start of the tile map line
                     self.mode = PpuMode::PixelTransfer;
                     self.pixels_to_discard = self.scx % 8; // discard pixels from the FIFO based on SCX
