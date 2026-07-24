@@ -187,22 +187,39 @@ impl Fetcher {
         });
     }
 
-    pub fn tile_address(&self, row: u8, scy: u8, use_unsigned_tile_addressing: bool) -> usize {
-        let mut line_in_tile = row.wrapping_add(scy) % 8; // which line of the tile we are currently drawing
+    pub fn tile_address(
+        &self,
+        row: u8,
+        scy: u8,
+        use_unsigned_tile_addressing: bool,
+        tall_sprite: bool,
+    ) -> usize {
         if let Some(sprite) = self.current_sprite {
+            let sprite_height = if tall_sprite { 16 } else { 8 };
+            let mut line_in_sprite = row.wrapping_add(16).wrapping_sub(sprite.y);
             if sprite.attributes.y_flip {
-                line_in_tile = 7 - line_in_tile;
+                line_in_sprite = sprite_height - 1 - line_in_sprite;
             }
+
+            let first_tile = if tall_sprite {
+                sprite.tile_index & 0xFE
+            } else {
+                sprite.tile_index
+            };
+            let tile_id = first_tile.wrapping_add(line_in_sprite / 8);
+            let line_in_tile = line_in_sprite % 8;
+            return tile_id as usize * 16 + line_in_tile as usize * 2;
         }
 
+        let line_in_tile = row.wrapping_add(scy) % 8;
         if use_unsigned_tile_addressing {
             self.tile_id as usize * 16 + // tile index
-                     (line_in_tile as usize) * 2 // low byte, line of the tile it self
+                     line_in_tile as usize * 2 // low byte, line of the tile it self
         } else {
             // https://gbdev.io/pandocs/Tile_Data.html#vram-tile-data
             // Tile data can store 384 tiles but tile map can only address 256 tiles
             (0x1000_isize + self.tile_id as i8 as isize * 16) as usize + // tile index
-                     (line_in_tile as usize) * 2 // low byte, line of the tile it self
+                     line_in_tile as usize * 2 // low byte, line of the tile it self
         }
     }
 
@@ -218,24 +235,23 @@ impl Fetcher {
         background_fifo: &mut VecDeque<u8>,
         sprites_to_draw: &mut SpriteToDraw,
         use_unsigned_tile_addressing: bool,
+        tall_sprites: bool,
     ) {
+        self.check_and_push_sprite(screen_x, sprites_to_draw);
+
+        if self.current_sprite.is_none() {
+            if let Some(sprite) = self.pending_sprites.pop_front() {
+                self.current_sprite = Some(sprite);
+                self.tile_id = sprite.tile_index;
+                self.state = FetcherState::FetchTileDataLow;
+                self.clock = 2;
+            }
+        }
+
         match self.state {
             FetcherState::FetchTileId => {
                 if self.clock > 0 {
                     self.clock -= 1;
-                    return;
-                }
-
-                let sprite = self.pending_sprites.pop_front();
-                if let Some(s) = sprite {
-                    self.current_sprite = Some(s);
-                    self.tile_id = s.tile_index;
-
-                    self.check_and_push_sprite(screen_x, sprites_to_draw);
-
-                    self.state = FetcherState::FetchTileDataLow;
-                    self.clock = 2;
-
                     return;
                 }
 
@@ -247,8 +263,6 @@ impl Fetcher {
 
                 self.tile_id = tile_map.0[tile_y][tile_x];
 
-                self.check_and_push_sprite(screen_x, sprites_to_draw);
-
                 self.state = FetcherState::FetchTileDataLow;
                 self.clock = 2;
             }
@@ -258,15 +272,13 @@ impl Fetcher {
                     return;
                 }
 
-                self.tile_data_low =
-                    tile_data.0[self.tile_address(row, scy, use_unsigned_tile_addressing)];
+                self.tile_data_low = tile_data.0
+                    [self.tile_address(row, scy, use_unsigned_tile_addressing, tall_sprites)];
                 if let Some(sprite) = self.current_sprite {
                     if sprite.attributes.x_flip {
                         self.tile_data_low = self.tile_data_low.reverse_bits();
                     }
                 }
-
-                self.check_and_push_sprite(screen_x, sprites_to_draw);
 
                 self.state = FetcherState::FetchTileDataHigh;
                 self.clock = 2;
@@ -277,15 +289,13 @@ impl Fetcher {
                     return;
                 }
 
-                self.tile_data_high =
-                    tile_data.0[self.tile_address(row, scy, use_unsigned_tile_addressing) + 1];
+                self.tile_data_high = tile_data.0
+                    [self.tile_address(row, scy, use_unsigned_tile_addressing, tall_sprites) + 1];
                 if let Some(sprite) = self.current_sprite {
                     if sprite.attributes.x_flip {
                         self.tile_data_high = self.tile_data_high.reverse_bits();
                     }
                 }
-
-                self.check_and_push_sprite(screen_x, sprites_to_draw);
 
                 self.state = FetcherState::Sleep;
                 self.clock = 2;
@@ -296,29 +306,26 @@ impl Fetcher {
                     return;
                 }
 
-                self.check_and_push_sprite(screen_x, sprites_to_draw);
-
                 self.state = FetcherState::Push;
                 self.clock = 2;
             }
             FetcherState::Push => {
                 if self.current_sprite.is_some() {
                     if object_fifo.len() < 8 {
-                        for i in (0..8).rev() {
-                            let bit_low = (self.tile_data_low >> i) & 1;
-                            let bit_high = (self.tile_data_high >> i) & 1;
+                        for pixel_index in 0..8 {
+                            let bit_index = 7 - pixel_index;
+                            let bit_low = (self.tile_data_low >> bit_index) & 1;
+                            let bit_high = (self.tile_data_high >> bit_index) & 1;
                             let color_id = (bit_high << 1) | bit_low;
 
-                            if let Some(pixel) = object_fifo.get(i) {
+                            if let Some(pixel) = object_fifo.get(pixel_index) {
                                 if *pixel == 0 {
-                                    object_fifo[i] = color_id;
+                                    object_fifo[pixel_index] = color_id;
                                 }
                             } else {
                                 object_fifo.push_back(color_id);
                             }
                         }
-
-                        self.check_and_push_sprite(screen_x, sprites_to_draw);
 
                         self.current_sprite = None;
                         self.state = FetcherState::FetchTileId;
@@ -331,9 +338,6 @@ impl Fetcher {
                         let color_id = (bit_high << 1) | bit_low;
                         background_fifo.push_back(color_id);
                     }
-
-                    self.check_and_push_sprite(screen_x, sprites_to_draw);
-
                     self.tile_x = self.tile_x.wrapping_add(1) & 31;
                     self.state = FetcherState::FetchTileId;
                     self.clock = 2;
@@ -440,7 +444,7 @@ impl SpriteToDraw {
     fn get_sprite_at(&mut self, x: u8) -> Option<Sprite> {
         for (i, sprite) in self.sprites.iter().enumerate() {
             if let Some(s) = sprite {
-                if s.x == x && !self.checked[i] {
+                if s.x.wrapping_sub(8) == x && !self.checked[i] {
                     self.checked[i] = true;
                     return Some(*s);
                 }
@@ -547,16 +551,14 @@ impl Ppu {
                         self.oam.0[sprite_index as usize * 4 + 3],
                     ]);
 
-                    if sprite.y.wrapping_sub(16) <= self.row
-                        && self.row < sprite.y.wrapping_sub(16).wrapping_add(8)
-                        && self.sprites_to_draw.len() < 10
-                    {
+                    let sprite_height = if self.lcd_control.obj_size { 16 } else { 8 };
+                    let line_in_sprite = self.row.wrapping_add(16).wrapping_sub(sprite.y);
+                    if line_in_sprite < sprite_height && self.sprites_to_draw.len() < 10 {
                         self.sprites_to_draw.push(sprite);
                     }
                 }
             }
             PpuMode::PixelTransfer => {
-                self.transfer_pixel();
                 self.fetcher.step(
                     &self.tile_map,
                     &self.tile_data,
@@ -568,7 +570,12 @@ impl Ppu {
                     &mut self.background_fifo,
                     &mut self.sprites_to_draw,
                     self.lcd_control.use_unsigned_tile_addressing,
+                    self.lcd_control.obj_size,
                 );
+                if self.fetcher.pending_sprites.is_empty() && self.fetcher.current_sprite.is_none()
+                {
+                    self.transfer_pixel();
+                }
             }
             _ => {}
         }
