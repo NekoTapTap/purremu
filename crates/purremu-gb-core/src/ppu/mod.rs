@@ -226,15 +226,12 @@ impl Fetcher {
                     return;
                 }
 
-                let sprite = sprites_to_draw.get_sprite_at(screen_x);
+                let sprite = self.pending_sprites.pop_front();
                 if let Some(s) = sprite {
-                    self.pending_sprites.push_back(s);
+                    self.current_sprite = Some(s);
+                    self.tile_id = s.tile_index;
 
-                    let sprite = self.pending_sprites.pop_front();
-                    if let Some(s) = sprite {
-                        self.current_sprite = Some(s);
-                        self.tile_id = s.tile_index;
-                    }
+                    self.check_and_push_sprite(screen_x, sprites_to_draw);
 
                     self.state = FetcherState::FetchTileDataLow;
                     self.clock = 2;
@@ -249,6 +246,8 @@ impl Fetcher {
                 let tile_x = (first_tile_x + self.tile_x as usize) % 32; // col of the tile map
 
                 self.tile_id = tile_map.0[tile_y][tile_x];
+
+                self.check_and_push_sprite(screen_x, sprites_to_draw);
 
                 self.state = FetcherState::FetchTileDataLow;
                 self.clock = 2;
@@ -498,26 +497,26 @@ impl Ppu {
     }
 
     pub(crate) fn transfer_pixel(&mut self) {
-        let background_pixel = self.background_fifo.pop_front();
-        let object_pixel = self.object_fifo.pop_front();
-
         // cannot draw a pixel if there is no background pixel
-        if background_pixel.is_none() {
+        if self.background_fifo.is_empty() {
             return;
         }
 
+        let background_pixel = self.background_fifo.pop_front();
+        let object_pixel = self.object_fifo.pop_front();
+
         let bg_color_id = background_pixel.unwrap();
         let obj_color_id = object_pixel.unwrap_or(0);
+
+        if self.pixels_to_discard > 0 {
+            self.pixels_to_discard -= 1;
+            return;
+        }
 
         // If the object pixel is not transparent (color ID 0), it takes priority over the background pixel
         if obj_color_id != 0 {
             self.framebuffer.0[self.row as usize][self.screen_x as usize] = obj_color_id;
             self.screen_x += 1;
-            return;
-        }
-
-        if self.pixels_to_discard > 0 {
-            self.pixels_to_discard -= 1;
             return;
         }
 
