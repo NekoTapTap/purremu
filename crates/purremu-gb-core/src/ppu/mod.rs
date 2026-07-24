@@ -501,39 +501,28 @@ impl Ppu {
         let background_pixel = self.background_fifo.pop_front();
         let object_pixel = self.object_fifo.pop_front();
 
-        match background_pixel {
-            Some(bg_color_id) => {
-                match object_pixel {
-                    Some(obj_color_id) => {
-                        // If the object pixel is not transparent (color ID 0), it takes priority over the background pixel
-                        if obj_color_id != 0 {
-                            self.framebuffer.0[self.row as usize][self.screen_x as usize] =
-                                obj_color_id;
-                            self.screen_x += 1;
-                            return;
-                        }
-
-                        self.framebuffer.0[self.row as usize][self.screen_x as usize] = bg_color_id;
-                        self.screen_x += 1;
-                    }
-                    None => {
-                        if self.pixels_to_discard > 0 {
-                            self.pixels_to_discard -= 1;
-                            return;
-                        }
-
-                        self.framebuffer.0[self.row as usize][self.screen_x as usize] = bg_color_id;
-                        self.screen_x += 1;
-                    }
-                }
-            }
-            None => {
-                if let Some(obj_color_id) = object_pixel {
-                    self.framebuffer.0[self.row as usize][self.screen_x as usize] = obj_color_id;
-                    self.screen_x += 1;
-                }
-            }
+        // cannot draw a pixel if there is no background pixel
+        if background_pixel.is_none() {
+            return;
         }
+
+        let bg_color_id = background_pixel.unwrap();
+        let obj_color_id = object_pixel.unwrap_or(0);
+
+        // If the object pixel is not transparent (color ID 0), it takes priority over the background pixel
+        if obj_color_id != 0 {
+            self.framebuffer.0[self.row as usize][self.screen_x as usize] = obj_color_id;
+            self.screen_x += 1;
+            return;
+        }
+
+        if self.pixels_to_discard > 0 {
+            self.pixels_to_discard -= 1;
+            return;
+        }
+
+        self.framebuffer.0[self.row as usize][self.screen_x as usize] = bg_color_id;
+        self.screen_x += 1;
     }
 
     pub fn step(&mut self) -> Vec<PpuEvent> {
