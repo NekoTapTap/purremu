@@ -179,6 +179,178 @@ impl Fetcher {
             current_sprite: None,
         }
     }
+
+    fn get_sprite_at(&self, x: u8, sprites_to_draw: &VecDeque<Sprite>) -> Vec<Sprite> {
+        sprites_to_draw
+            .iter()
+            .filter(|sprite| sprite.x == x)
+            .copied()
+            .collect()
+    }
+
+    fn check_and_push_sprite(&mut self, screen_x: u8, sprites_to_draw: &VecDeque<Sprite>) {
+        let sprites = self.get_sprite_at(screen_x, sprites_to_draw);
+        sprites.iter().for_each(|sprite| {
+            self.pending_sprites.push_back(*sprite);
+        });
+    }
+
+    pub fn tile_address(&self, row: u8, scy: u8, use_unsigned_tile_addressing: bool) -> usize {
+        let mut line_in_tile = row.wrapping_add(scy) % 8; // which line of the tile we are currently drawing
+        if let Some(sprite) = self.current_sprite {
+            if sprite.attributes.y_flip {
+                line_in_tile = 7 - line_in_tile;
+            }
+        }
+
+        if use_unsigned_tile_addressing {
+            self.tile_id as usize * 16 + // tile index
+                     (line_in_tile as usize) * 2 // low byte, line of the tile it self
+        } else {
+            // https://gbdev.io/pandocs/Tile_Data.html#vram-tile-data
+            // Tile data can store 384 tiles but tile map can only address 256 tiles
+            (0x1000_isize + self.tile_id as i8 as isize * 16) as usize + // tile index
+                     (line_in_tile as usize) * 2 // low byte, line of the tile it self
+        }
+    }
+
+    fn step(
+        &mut self,
+        tile_map: &TileMap,
+        tile_data: &TileData,
+        screen_x: u8,
+        scx: u8,
+        scy: u8,
+        row: u8,
+        object_fifo: &mut VecDeque<u8>,
+        background_fifo: &mut VecDeque<u8>,
+        sprites_to_draw: &VecDeque<Sprite>,
+        use_unsigned_tile_addressing: bool,
+    ) {
+        match self.state {
+            FetcherState::FetchTileId => {
+                if self.clock > 0 {
+                    self.clock -= 1;
+                    return;
+                }
+
+                let sprites = self.get_sprite_at(screen_x, sprites_to_draw);
+                if sprites.len() > 0 {
+                    sprites.iter().for_each(|sprite| {
+                        self.pending_sprites.push_back(*sprite);
+                    });
+
+                    let sprite = self.pending_sprites.pop_front();
+                    if let Some(s) = sprite {
+                        self.current_sprite = Some(s);
+                        self.tile_id = s.tile_index;
+                    }
+
+                    self.state = FetcherState::FetchTileDataLow;
+                    self.clock = 2;
+
+                    return;
+                }
+
+                let background_y = row.wrapping_add(scy);
+                let tile_y = usize::from(background_y / 8); // line of the tile map
+
+                let first_tile_x = usize::from(scx / 8); // skipped tiles at the start of the line
+                let tile_x = (first_tile_x + self.tile_x as usize) % 32; // col of the tile map
+
+                self.tile_id = tile_map.0[tile_y][tile_x];
+
+                self.state = FetcherState::FetchTileDataLow;
+                self.clock = 2;
+            }
+            FetcherState::FetchTileDataLow => {
+                if self.clock > 0 {
+                    self.clock -= 1;
+                    return;
+                }
+
+                self.tile_data_low =
+                    tile_data.0[self.tile_address(row, scy, use_unsigned_tile_addressing)];
+                if let Some(sprite) = self.current_sprite {
+                    if sprite.attributes.x_flip {
+                        self.tile_data_low = self.tile_data_low.reverse_bits();
+                    }
+                }
+
+                self.check_and_push_sprite(screen_x, sprites_to_draw);
+
+                self.state = FetcherState::FetchTileDataHigh;
+                self.clock = 2;
+            }
+            FetcherState::FetchTileDataHigh => {
+                if self.clock > 0 {
+                    self.clock -= 1;
+                    return;
+                }
+
+                self.tile_data_high =
+                    tile_data.0[self.tile_address(row, scy, use_unsigned_tile_addressing) + 1];
+                if let Some(sprite) = self.current_sprite {
+                    if sprite.attributes.x_flip {
+                        self.tile_data_high = self.tile_data_high.reverse_bits();
+                    }
+                }
+
+                self.check_and_push_sprite(screen_x, sprites_to_draw);
+
+                self.state = FetcherState::Sleep;
+                self.clock = 2;
+            }
+            FetcherState::Sleep => {
+                if self.clock > 0 {
+                    self.clock -= 1;
+                    return;
+                }
+
+                self.check_and_push_sprite(screen_x, sprites_to_draw);
+
+                self.state = FetcherState::Push;
+                self.clock = 2;
+            }
+            FetcherState::Push => {
+                if self.current_sprite.is_some() {
+                    if object_fifo.len() < 8 {
+                        for i in (0..8).rev() {
+                            let bit_low = (self.tile_data_low >> i) & 1;
+                            let bit_high = (self.tile_data_high >> i) & 1;
+                            let color_id = (bit_high << 1) | bit_low;
+
+                            if let Some(pixel) = object_fifo.get(i) {
+                                if *pixel == 0 {
+                                    object_fifo[i] = color_id;
+                                }
+                            } else {
+                                object_fifo.push_back(color_id);
+                            }
+                        }
+
+                        self.check_and_push_sprite(screen_x, sprites_to_draw);
+
+                        self.state = FetcherState::FetchTileId;
+                        self.clock = 2;
+                    }
+                } else if background_fifo.is_empty() {
+                    for i in (0..8).rev() {
+                        let bit_low = (self.tile_data_low >> i) & 1;
+                        let bit_high = (self.tile_data_high >> i) & 1;
+                        let color_id = (bit_high << 1) | bit_low;
+                        background_fifo.push_back(color_id);
+                    }
+
+                    self.check_and_push_sprite(screen_x, sprites_to_draw);
+
+                    self.tile_x = self.tile_x.wrapping_add(1) & 31;
+                    self.state = FetcherState::FetchTileId;
+                    self.clock = 2;
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -281,33 +453,6 @@ impl Ppu {
         }
     }
 
-    fn get_sprite_at(&self, x: u8) -> Vec<Sprite> {
-        self.sprites_to_draw
-            .iter()
-            .filter(|sprite| sprite.x == x)
-            .copied()
-            .collect()
-    }
-
-    pub fn tile_address(&self) -> usize {
-        let mut line_in_tile = self.row.wrapping_add(self.scy) % 8; // which line of the tile we are currently drawing
-        if let Some(sprite) = self.fetcher.current_sprite {
-            if sprite.attributes.y_flip {
-                line_in_tile = 7 - line_in_tile;
-            }
-        }
-
-        if self.lcd_control.use_unsigned_tile_addressing {
-            self.fetcher.tile_id as usize * 16 + // tile index
-                     (line_in_tile as usize) * 2 // low byte, line of the tile it self
-        } else {
-            // https://gbdev.io/pandocs/Tile_Data.html#vram-tile-data
-            // Tile data can store 384 tiles but tile map can only address 256 tiles
-            (0x1000_isize + self.fetcher.tile_id as i8 as isize * 16) as usize + // tile index
-                     (line_in_tile as usize) * 2 // low byte, line of the tile it self
-        }
-    }
-
     pub(crate) fn transfer_pixel(&mut self) {
         let background_pixel = self.background_fifo.pop_front();
         let object_pixel = self.object_fifo.pop_front();
@@ -320,12 +465,12 @@ impl Ppu {
                         if obj_color_id != 0 {
                             self.framebuffer.0[self.row as usize][self.screen_x as usize] =
                                 obj_color_id;
-                            self.col += 1;
+                            self.screen_x += 1;
                             return;
                         }
 
                         self.framebuffer.0[self.row as usize][self.screen_x as usize] = bg_color_id;
-                        self.col += 1;
+                        self.screen_x += 1;
                     }
                     None => {
                         if self.pixels_to_discard > 0 {
@@ -334,24 +479,17 @@ impl Ppu {
                         }
 
                         self.framebuffer.0[self.row as usize][self.screen_x as usize] = bg_color_id;
-                        self.col += 1;
+                        self.screen_x += 1;
                     }
                 }
             }
             None => {
                 if let Some(obj_color_id) = object_pixel {
                     self.framebuffer.0[self.row as usize][self.screen_x as usize] = obj_color_id;
-                    self.col += 1;
+                    self.screen_x += 1;
                 }
             }
         }
-    }
-
-    fn check_and_push_sprite(&mut self) {
-        let sprites = self.get_sprite_at(self.screen_x);
-        sprites.iter().for_each(|sprite| {
-            self.fetcher.pending_sprites.push_back(*sprite);
-        });
     }
 
     pub fn step(&mut self) -> Vec<PpuEvent> {
@@ -384,131 +522,26 @@ impl Ppu {
                         self.sprites_to_draw.push(sprite);
                     }
                 }
-
-                self.col += 1;
             }
             PpuMode::PixelTransfer => {
                 self.transfer_pixel();
-
-                match self.fetcher.state {
-                    FetcherState::FetchTileId => {
-                        if self.fetcher.clock > 0 {
-                            self.fetcher.clock -= 1;
-                        }
-
-                        let sprites = self.get_sprite_at(self.screen_x);
-                        if sprites.len() > 0 {
-                            sprites.iter().for_each(|sprite| {
-                                self.fetcher.pending_sprites.push_back(*sprite);
-                            });
-
-                            let sprite = self.fetcher.pending_sprites.pop_front();
-                            if let Some(s) = sprite {
-                                self.fetcher.current_sprite = Some(s);
-                                self.fetcher.tile_id = s.tile_index;
-                            }
-                        } else {
-                            let background_y = self.row.wrapping_add(self.scy);
-                            let tile_y = usize::from(background_y / 8); // line of the tile map
-
-                            let first_tile_x = usize::from(self.scx / 8); // skipped tiles at the start of the line
-                            let tile_x = (first_tile_x + self.fetcher.tile_x as usize) % 32; // col of the tile map
-
-                            self.fetcher.tile_id = self.tile_map.0[tile_y][tile_x];
-                        }
-
-                        self.fetcher.state = FetcherState::FetchTileDataLow;
-                        self.fetcher.clock = 2;
-                    }
-                    FetcherState::FetchTileDataLow => {
-                        if self.fetcher.clock > 0 {
-                            self.fetcher.clock -= 1;
-                        }
-
-                        self.fetcher.tile_data_low = self.tile_data.0[self.tile_address()];
-                        if let Some(sprite) = self.fetcher.current_sprite {
-                            if sprite.attributes.x_flip {
-                                self.fetcher.tile_data_low =
-                                    self.fetcher.tile_data_low.reverse_bits();
-                            }
-                        }
-
-                        self.check_and_push_sprite();
-
-                        self.fetcher.state = FetcherState::FetchTileDataHigh;
-                        self.fetcher.clock = 2;
-                    }
-                    FetcherState::FetchTileDataHigh => {
-                        if self.fetcher.clock > 0 {
-                            self.fetcher.clock -= 1;
-                        }
-
-                        self.fetcher.tile_data_high = self.tile_data.0[self.tile_address() + 1];
-                        if let Some(sprite) = self.fetcher.current_sprite {
-                            if sprite.attributes.x_flip {
-                                self.fetcher.tile_data_high =
-                                    self.fetcher.tile_data_high.reverse_bits();
-                            }
-                        }
-
-                        self.check_and_push_sprite();
-
-                        self.fetcher.state = FetcherState::Sleep;
-                        self.fetcher.clock = 2;
-                    }
-                    FetcherState::Sleep => {
-                        if self.fetcher.clock > 0 {
-                            self.fetcher.clock -= 1;
-                        }
-
-                        self.check_and_push_sprite();
-
-                        self.fetcher.state = FetcherState::Push;
-                        self.fetcher.clock = 2;
-                    }
-                    FetcherState::Push => {
-                        if self.fetcher.current_sprite.is_some() {
-                            if self.object_fifo.len() < 8 {
-                                for i in (0..8).rev() {
-                                    let bit_low = (self.fetcher.tile_data_low >> i) & 1;
-                                    let bit_high = (self.fetcher.tile_data_high >> i) & 1;
-                                    let color_id = (bit_high << 1) | bit_low;
-
-                                    if let Some(pixel) = self.object_fifo.get(i) {
-                                        if *pixel == 0 {
-                                            self.object_fifo[i] = color_id;
-                                        }
-                                    } else {
-                                        self.object_fifo.push_back(color_id);
-                                    }
-                                }
-
-                                self.check_and_push_sprite();
-
-                                self.fetcher.state = FetcherState::FetchTileId;
-                                self.fetcher.clock = 2;
-                            }
-                        } else if self.background_fifo.is_empty() {
-                            for i in (0..8).rev() {
-                                let bit_low = (self.fetcher.tile_data_low >> i) & 1;
-                                let bit_high = (self.fetcher.tile_data_high >> i) & 1;
-                                let color_id = (bit_high << 1) | bit_low;
-                                self.background_fifo.push_back(color_id);
-                            }
-
-                            self.check_and_push_sprite();
-
-                            self.fetcher.tile_x = self.fetcher.tile_x.wrapping_add(1) & 31;
-                            self.fetcher.state = FetcherState::FetchTileId;
-                            self.fetcher.clock = 2;
-                        }
-                    }
-                }
+                self.fetcher.step(
+                    &self.tile_map,
+                    &self.tile_data,
+                    self.screen_x,
+                    self.scx,
+                    self.scy,
+                    self.row,
+                    &mut self.object_fifo,
+                    &mut self.background_fifo,
+                    &VecDeque::from(self.sprites_to_draw.clone()),
+                    self.lcd_control.use_unsigned_tile_addressing,
+                );
             }
-            _ => {
-                self.col += 1;
-            }
+            _ => {}
         }
+
+        self.col += 1;
 
         // state transitions
         match self.mode {
