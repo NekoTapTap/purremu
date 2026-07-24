@@ -180,16 +180,8 @@ impl Fetcher {
         }
     }
 
-    fn get_sprite_at(&self, x: u8, sprites_to_draw: &VecDeque<Sprite>) -> Vec<Sprite> {
-        sprites_to_draw
-            .iter()
-            .filter(|sprite| sprite.x == x)
-            .copied()
-            .collect()
-    }
-
-    fn check_and_push_sprite(&mut self, screen_x: u8, sprites_to_draw: &VecDeque<Sprite>) {
-        let sprites = self.get_sprite_at(screen_x, sprites_to_draw);
+    fn check_and_push_sprite(&mut self, screen_x: u8, sprites_to_draw: &mut SpriteToDraw) {
+        let sprites = sprites_to_draw.get_sprite_at(screen_x);
         sprites.iter().for_each(|sprite| {
             self.pending_sprites.push_back(*sprite);
         });
@@ -224,7 +216,7 @@ impl Fetcher {
         row: u8,
         object_fifo: &mut VecDeque<u8>,
         background_fifo: &mut VecDeque<u8>,
-        sprites_to_draw: &VecDeque<Sprite>,
+        sprites_to_draw: &mut SpriteToDraw,
         use_unsigned_tile_addressing: bool,
     ) {
         match self.state {
@@ -234,11 +226,9 @@ impl Fetcher {
                     return;
                 }
 
-                let sprites = self.get_sprite_at(screen_x, sprites_to_draw);
-                if sprites.len() > 0 {
-                    sprites.iter().for_each(|sprite| {
-                        self.pending_sprites.push_back(*sprite);
-                    });
+                let sprite = sprites_to_draw.get_sprite_at(screen_x);
+                if let Some(s) = sprite {
+                    self.pending_sprites.push_back(s);
 
                     let sprite = self.pending_sprites.pop_front();
                     if let Some(s) = sprite {
@@ -331,6 +321,7 @@ impl Fetcher {
 
                         self.check_and_push_sprite(screen_x, sprites_to_draw);
 
+                        self.current_sprite = None;
                         self.state = FetcherState::FetchTileId;
                         self.clock = 2;
                     }
@@ -408,6 +399,59 @@ impl From<[u8; 4]> for Sprite {
     }
 }
 
+#[derive(Debug, Clone)]
+struct SpriteToDraw {
+    sprites: [Option<Sprite>; 10],
+    checked: [bool; 10],
+}
+
+impl SpriteToDraw {
+    fn new() -> Self {
+        Self {
+            sprites: [None; 10],
+            checked: [false; 10],
+        }
+    }
+
+    fn sort(&mut self) {
+        self.sprites.sort_by(|a, b| match (a, b) {
+            (Some(a), Some(b)) => {
+                if a.x == b.x {
+                    a.tile_index.cmp(&b.tile_index)
+                } else {
+                    a.x.cmp(&b.x)
+                }
+            }
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+    }
+
+    fn len(&self) -> usize {
+        self.sprites.iter().filter(|s| s.is_some()).count()
+    }
+
+    fn push(&mut self, sprite: Sprite) {
+        if let Some(pos) = self.sprites.iter().position(|s| s.is_none()) {
+            self.sprites[pos] = Some(sprite);
+        }
+    }
+
+    fn get_sprite_at(&mut self, x: u8) -> Option<Sprite> {
+        for (i, sprite) in self.sprites.iter().enumerate() {
+            if let Some(s) = sprite {
+                if s.x == x && !self.checked[i] {
+                    self.checked[i] = true;
+                    return Some(*s);
+                }
+            }
+        }
+
+        None
+    }
+}
+
 pub(crate) struct Ppu {
     row: u8,
     col: u16,
@@ -426,7 +470,7 @@ pub(crate) struct Ppu {
     scx: u8, // Scroll X
     scy: u8, // Scroll Y
     pixels_to_discard: u8,
-    sprites_to_draw: Vec<Sprite>,
+    sprites_to_draw: SpriteToDraw,
 }
 
 impl Ppu {
@@ -449,7 +493,7 @@ impl Ppu {
             scx: 0,
             scy: 0,
             pixels_to_discard: 0,
-            sprites_to_draw: Vec::new(),
+            sprites_to_draw: SpriteToDraw::new(),
         }
     }
 
@@ -534,7 +578,7 @@ impl Ppu {
                     self.row,
                     &mut self.object_fifo,
                     &mut self.background_fifo,
-                    &VecDeque::from(self.sprites_to_draw.clone()),
+                    &mut self.sprites_to_draw,
                     self.lcd_control.use_unsigned_tile_addressing,
                 );
             }
@@ -547,13 +591,7 @@ impl Ppu {
         match self.mode {
             PpuMode::OamSearch => {
                 if self.col >= 80 {
-                    self.sprites_to_draw.sort_by(|a, b| {
-                        if a.x == b.x {
-                            a.tile_index.cmp(&b.tile_index)
-                        } else {
-                            a.x.cmp(&b.x)
-                        }
-                    });
+                    self.sprites_to_draw.sort();
                     self.fetcher.tile_x = 0; // start of the tile map line
                     self.mode = PpuMode::PixelTransfer;
                     self.pixels_to_discard = self.scx % 8; // discard pixels from the FIFO based on SCX
@@ -587,7 +625,9 @@ impl Ppu {
                 if self.screen_x >= 160 {
                     self.mode = PpuMode::HBlank;
                     self.fetcher = Fetcher::new();
+                    self.sprites_to_draw = SpriteToDraw::new();
                     self.background_fifo.clear();
+                    self.object_fifo.clear();
                     self.screen_x = 0;
 
                     if self.lcd_status.mode_h_blank_interrupt {
