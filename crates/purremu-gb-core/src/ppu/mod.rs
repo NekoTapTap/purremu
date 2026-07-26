@@ -242,7 +242,6 @@ impl Fetcher {
         if self.current_sprite.is_none() {
             if let Some(sprite) = self.pending_sprites.pop_front() {
                 self.current_sprite = Some(sprite);
-                self.tile_id = sprite.tile_index;
                 self.state = FetcherState::FetchTileDataLow;
                 self.clock = 2;
             }
@@ -311,26 +310,24 @@ impl Fetcher {
             }
             FetcherState::Push => {
                 if self.current_sprite.is_some() {
-                    if object_fifo.len() < 8 {
-                        for pixel_index in 0..8 {
-                            let bit_index = 7 - pixel_index;
-                            let bit_low = (self.tile_data_low >> bit_index) & 1;
-                            let bit_high = (self.tile_data_high >> bit_index) & 1;
-                            let color_id = (bit_high << 1) | bit_low;
+                    while object_fifo.len() < 8 {
+                        object_fifo.push_back(0);
+                    }
 
-                            if let Some(pixel) = object_fifo.get(pixel_index) {
-                                if *pixel == 0 {
-                                    object_fifo[pixel_index] = color_id;
-                                }
-                            } else {
-                                object_fifo.push_back(color_id);
-                            }
+                    for (pixel_index, pixel) in object_fifo.iter_mut().take(8).enumerate() {
+                        if *pixel != 0 {
+                            continue;
                         }
 
-                        self.current_sprite = None;
-                        self.state = FetcherState::FetchTileId;
-                        self.clock = 2;
+                        let bit_index = 7 - pixel_index;
+                        let bit_low = (self.tile_data_low >> bit_index) & 1;
+                        let bit_high = (self.tile_data_high >> bit_index) & 1;
+                        *pixel = (bit_high << 1) | bit_low;
                     }
+
+                    self.current_sprite = None;
+                    self.state = FetcherState::FetchTileId;
+                    self.clock = 2;
                 } else if background_fifo.is_empty() {
                     for i in (0..8).rev() {
                         let bit_low = (self.tile_data_low >> i) & 1;
@@ -418,13 +415,7 @@ impl SpriteToDraw {
 
     fn sort(&mut self) {
         self.sprites.sort_by(|a, b| match (a, b) {
-            (Some(a), Some(b)) => {
-                if a.x == b.x {
-                    a.tile_index.cmp(&b.tile_index)
-                } else {
-                    a.x.cmp(&b.x)
-                }
-            }
+            (Some(a), Some(b)) => a.x.cmp(&b.x),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
@@ -553,7 +544,7 @@ impl Ppu {
 
                     let sprite_height = if self.lcd_control.obj_size { 16 } else { 8 };
                     let line_in_sprite = self.row.wrapping_add(16).wrapping_sub(sprite.y);
-                    if line_in_sprite < sprite_height && self.sprites_to_draw.len() < 10 {
+                    if line_in_sprite < sprite_height {
                         self.sprites_to_draw.push(sprite);
                     }
                 }
